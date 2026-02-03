@@ -1,23 +1,32 @@
 // sessions/sessionManager.js
 
 import pkg from "whatsapp-web.js";
-const { Client, LocalAuth, MessageMedia } = pkg;
-import fs from "fs";
-import path from "path";
+const { Client, RemoteAuth, MessageMedia } = pkg;
+// import fs from "fs"; // Ya no se necesita fs para auth
+// import path from "path";
+import mongoose from "mongoose";
+import { MongoStore } from "wwebjs-mongo";
 
 // Mapa global de clientes activos
-export const clients = {}; // <-- EXPORTA AQUÍ
+export const clients = {}; 
 
 export function getOrCreateClient({ clientId, io }) {
   if (clients[clientId]) return clients[clientId];
 
-  // Carpeta separada por cliente
-  const authPath = path.join("wwebjs_auth", clientId);
-  if (!fs.existsSync("wwebjs_auth")) fs.mkdirSync("wwebjs_auth");
-  if (!fs.existsSync(authPath)) fs.mkdirSync(authPath);
+  // Asegura conexión a Mongo (utiliza la misma URI que el resto de la app)
+  // Nota: Esto puede ser redundante si ya se conecta en server.js, pero RemoteAuth necesita el store listo
+  if (mongoose.connection.readyState === 0) {
+     mongoose.connect(process.env.MONGO_URI).catch(err => console.error("Error conectando Mongoose:", err));
+  }
+
+  const store = new MongoStore({ mongoose: mongoose });
 
   const client = new Client({
-    authStrategy: new LocalAuth({ clientId, dataPath: "wwebjs_auth" }),
+    authStrategy: new RemoteAuth({
+      clientId: clientId,
+      store: store,
+      backupSyncIntervalMs: 300000
+    }),
     puppeteer: {
       headless: true,
       args: [
@@ -56,6 +65,10 @@ export function getOrCreateClient({ clientId, io }) {
     limpiarSesion(clientId, io, "auth_failure");
   });
 
+  client.on("remote_session_saved", () => {
+     console.log(`[${clientId}] Sesión remota guardada en DB`);
+  });
+
   client.on("disconnected", (reason) => {
     io.to(clientId).emit("status", { status: "disconnected", reason });
     client.status = "disconnected";
@@ -86,12 +99,13 @@ function limpiarSesion(clientId, io, motivo = "") {
     delete clients[clientId];
   }
 
-  // Elimina carpeta de auth de la sesión
-  const authDir = path.join("wwebjs_auth", clientId);
-  if (fs.existsSync(authDir)) {
-    fs.rmSync(authDir, { recursive: true, force: true });
-    console.log(`[${clientId}] Archivos de sesión eliminados`);
-  }
+  // Opcional: Eliminar sesión de la DB si es un logout manual real? 
+  // RemoteAuth no tiene un método directo para borrar del store fácilmente expuesto en 'destroy', 
+  // pero al destruir el cliente se detiene.
+  // Si quisiéramos borrar la sesión de Mongo, necesitaríamos usar el store.
+  
+  // Por ahora solo liberamos memoria y notificamos.
+  console.log(`[${clientId}] Cliente destruido en memoria`);
 
   // Opcional: notificar por websocket si necesitas más feedback
   io.to(clientId).emit("session_cleaned", { status: "cleaned", motivo });
