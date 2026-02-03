@@ -31,7 +31,7 @@ connectMongo()
 app.post("/api/session", (req, res) => {
   const { clientId } = req.body;
   if (!clientId) return res.status(400).json({ error: "Falta clientId" });
-  getOrCreateClient({ clientId, io });
+  getOrCreateClient({ clientId, io }).catch(err => console.error("Error background creation:", err));
   res.json({ status: "pending", clientId });
 });
 

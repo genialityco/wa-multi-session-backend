@@ -10,13 +10,18 @@ import { MongoStore } from "wwebjs-mongo";
 // Mapa global de clientes activos
 export const clients = {}; 
 
-export function getOrCreateClient({ clientId, io }) {
+export async function getOrCreateClient({ clientId, io }) {
   if (clients[clientId]) return clients[clientId];
 
   // Asegura conexión a Mongo (utiliza la misma URI que el resto de la app)
-  // Nota: Esto puede ser redundante si ya se conecta en server.js, pero RemoteAuth necesita el store listo
   if (mongoose.connection.readyState === 0) {
-     mongoose.connect(process.env.MONGO_URI).catch(err => console.error("Error conectando Mongoose:", err));
+     try {
+        await mongoose.connect(process.env.MONGO_URI);
+        console.log("Mongoose conectado para RemoteAuth");
+     } catch (err) {
+        console.error("Error conectando Mongoose:", err);
+        throw err; // No podemos seguir sin DB para RemoteAuth
+     }
   }
 
   const store = new MongoStore({ mongoose: mongoose });
@@ -33,7 +38,21 @@ export function getOrCreateClient({ clientId, io }) {
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-gpu",
+        "--disable-gpu", // Ya estaba, pero lo mantenemos
+        "--disable-extensions", // Deshabilita extensiones
+        "--disable-component-extensions-with-background-pages",
+        "--disable-default-apps",
+        "--mute-audio", // Mutea audio
+        "--no-default-browser-check",
+        "--autoplay-policy=user-gesture-required",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-notifications",
+        "--disable-background-networking",
+        "--disable-breakpad",
+        "--disable-component-update",
+        "--disable-domain-reliability",
+        "--disable-sync",
       ],
     },
   });
