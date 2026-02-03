@@ -4,6 +4,5 @@ npm-debug.log
 .gitignore
 .env
 wwebjs_auth
-sessions
 .qodo
 .wwebjs_cache
