@@ -20,8 +20,12 @@ export function getOrCreateClient({ clientId, io }) {
     authStrategy: new LocalAuth({ clientId, dataPath: "wwebjs_auth" }),
     puppeteer: {
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      // Puedes especificar executablePath si es necesario
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
     },
   });
 
@@ -35,7 +39,7 @@ export function getOrCreateClient({ clientId, io }) {
 
   client.on("ready", () => {
     io.to(clientId).emit("status", { status: "ready" });
-    client.status = "ready"; // <-- Puedes guardar el estado aquí
+    client.status = "ready";
     console.log(`[${clientId}] Sesión lista`);
   });
 
@@ -59,7 +63,10 @@ export function getOrCreateClient({ clientId, io }) {
     limpiarSesion(clientId, io, "disconnected");
   });
 
-  client.initialize();
+  client.initialize().catch((err) => {
+    console.error(`[${clientId}] Error en initialize:`, err);
+    limpiarSesion(clientId, io, "init_error");
+  });
 
   return client;
 }
