@@ -117,6 +117,16 @@ io.on("connection", (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Global Error Handlers for debugging
+process.on('uncaughtException', (err) => {
+  console.error('❌ UNCAUGHT EXCEPTION:', err);
+  // Keep process alive if possible or let it crash logging
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ UNHANDLED REJECTION:', reason);
+});
+
 httpServer.listen(PORT, () => {
   console.log(`🚀 Backend multi-sesión listo en http://localhost:${PORT}`);
 });

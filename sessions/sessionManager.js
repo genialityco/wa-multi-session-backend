@@ -85,14 +85,19 @@ export async function getOrCreateClient({ clientId, io }) {
   });
 
   client.on("remote_session_saved", () => {
-     console.log(`[${clientId}] Sesión remota guardada en DB`);
+     console.log(`[${clientId}] ✅ REMOTE SESSION SAVED to Mongo!`);
   });
 
   client.on("disconnected", (reason) => {
     io.to(clientId).emit("status", { status: "disconnected", reason });
     client.status = "disconnected";
-    console.log(`[${clientId}] Desconectado`);
+    console.log(`[${clientId}] ❌ Desconectado: ${reason}`);
     limpiarSesion(clientId, io, "disconnected");
+  });
+  
+  // Debug logs internal
+  client.on("change_state", state => {
+      console.log(`[${clientId}] CHANGE STATE: ${state}`);
   });
 
   client.initialize().catch((err) => {
