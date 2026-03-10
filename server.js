@@ -40,6 +40,54 @@ app.post("/api/session", (req, res) => {
   res.json({ status: "pending", clientId });
 });
 
+app.get("/webhook", (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  const VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || 'mi_token_secreto';
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ Webhook verificado');
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+app.post("/webhook", async (req, res) => {
+  try {
+    const body = req.body;
+
+    if (body.object === 'whatsapp_business_account') {
+      for (const entry of body.entry) {
+        for (const change of entry.changes) {
+          if (change.field === 'messages') {
+            const messages = change.value.messages;
+            
+            if (messages) {
+              for (const message of messages) {
+                if (message.type === 'text') {
+                  await processIncomingMessage({
+                    from: message.from,
+                    text: message.text,
+                    timestamp: message.timestamp
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('Error procesando webhook:', error);
+    res.sendStatus(500);
+  }
+});
+
 // API: Enviar mensaje (texto y/o imagen)
 app.post("/api/send", async (req, res) => {
   const { clientId, phone, message, image } = req.body;
@@ -241,6 +289,28 @@ app.post("/api/logout", (req, res) => {
   if (!clientId) return res.status(400).json({ error: "Falta clientId" });
   logoutClient(clientId, io);
   res.json({ status: "logout", clientId });
+});
+
+app.post("/api/account/remove", (req, res) => {
+  const { accountId } = req.body;
+  
+  if (!accountId) {
+    return res.status(400).json({ error: "Falta accountId" });
+  }
+
+  const removed = removeAccount(accountId);
+  
+  if (removed) {
+    res.json({ status: "removed", accountId });
+  } else {
+    res.status(404).json({ error: "Cuenta no encontrada" });
+  }
+});
+
+// API: Listar cuentas registradas
+app.get("/api/accounts", (req, res) => {
+  const accounts = listAccounts();
+  res.json(accounts);
 });
 
 // API: Listar sesiones activas
