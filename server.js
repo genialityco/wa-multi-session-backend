@@ -12,9 +12,12 @@ import {
   MessageMedia, // 👈 IMPORTANTE
 } from "./sessions/sessionManager.js";
 import {
-  registerAccount,
+ registerAccount,
   getAccount,
+  listAccounts,
+
   sendTemplateWithButtons,
+  removeAccount
 } from "./services/whatsappApi.js";
 
 dotenv.config();
