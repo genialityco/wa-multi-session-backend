@@ -15,7 +15,7 @@ import {
  registerAccount,
   getAccount,
   listAccounts,
-
+  sendTemplateWithParams,
   sendTemplateWithButtons,
   removeAccount
 } from "./services/whatsappApi.js";
