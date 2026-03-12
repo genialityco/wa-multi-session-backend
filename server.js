@@ -341,6 +341,150 @@ app.post("/api/send-meeting-confirmation", async (req, res) => {
   }
 });
 
+app.post("/api/send-meeting-cancelled", async (req, res) => {
+  const { 
+    accountId, 
+    to, 
+    eventName,
+    meetingWith,
+    company,
+    day,
+    schedule,
+    table
+  } = req.body;
+  
+  if (!accountId || !to || !eventName || !meetingWith || 
+      !company || !day || !schedule || !table) {
+    return res.status(400).json({ 
+      error: "Faltan datos requeridos",
+      required: [
+        "accountId", "to", "eventName", "meetingWith",
+        "company", "day", "schedule", "table"
+      ]
+    });
+  }
+
+  const account = getAccount(accountId);
+  if (!account) {
+    return res.status(404).json({ 
+      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.` 
+    });
+  }
+
+  try {
+    // Limpiar número de teléfono
+    const cleanPhone = String(to).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    // Parámetros del template en orden
+    const bodyParameters = [
+      eventName,    // {{1}}
+      meetingWith,  // {{2}}
+      company,      // {{3}}
+      day,          // {{4}}
+      schedule,     // {{5}}
+      table         // {{6}}
+    ];
+
+    // Enviar template sin botones
+    const result = await sendTemplateWithParams(
+      accountId,
+      cleanPhone,
+      'reunion_cancelada',  // Nombre del template
+      bodyParameters,
+      'es'
+    );
+
+    res.json({
+      status: 'sent',
+      phone: cleanPhone,
+      messageId: result.messages?.[0]?.id,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando cancelación:", error?.response?.data || error);
+    
+    const errData = error?.response?.data || {};
+    res.status(500).json({ 
+      error: "Error al enviar la cancelación",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData
+    });
+  }
+});
+
+app.post("/api/send-meeting-rejection", async (req, res) => {
+  const { 
+    accountId, 
+    to, 
+    eventName,
+    rejectedByName,
+    rejectedByCompany
+  } = req.body;
+  
+  if (!accountId || !to || !eventName || !rejectedByName || !rejectedByCompany) {
+    return res.status(400).json({ 
+      error: "Faltan datos requeridos",
+      required: [
+        "accountId", "to", "eventName", "rejectedByName", "rejectedByCompany"
+      ]
+    });
+  }
+
+  const account = getAccount(accountId);
+  if (!account) {
+    return res.status(404).json({ 
+      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.` 
+    });
+  }
+
+  try {
+    // Limpiar número de teléfono
+    const cleanPhone = String(to).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    // Parámetros del template en orden
+    const bodyParameters = [
+      eventName,          // {{1}}
+      rejectedByName,     // {{2}}
+      rejectedByCompany   // {{3}}
+    ];
+
+    // Enviar template sin botones
+    const result = await sendTemplateWithParams(
+      accountId,
+      cleanPhone,
+      'rechazo_solicitud',  // Nombre del template
+      bodyParameters,
+      'es'
+    );
+
+    res.json({
+      status: 'sent',
+      phone: cleanPhone,
+      messageId: result.messages?.[0]?.id,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando rechazo:", error?.response?.data || error);
+    
+    const errData = error?.response?.data || {};
+    res.status(500).json({ 
+      error: "Error al enviar el rechazo",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData
+    });
+  }
+});
+
 app.post("/api/account/register", (req, res) => {
   const { accountId, phoneNumberId, accessToken } = req.body;
   
