@@ -12,9 +12,10 @@ import {
   MessageMedia, // 👈 IMPORTANTE
 } from "./sessions/sessionManager.js";
 import {
- registerAccount,
+  registerAccount,
   getAccount,
   listAccounts,
+  sendTextMessage,
   sendTemplateWithParams,
   sendTemplateWithButtons,
   removeAccount
@@ -478,6 +479,50 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
     const errData = error?.response?.data || {};
     res.status(500).json({ 
       error: "Error al enviar el rechazo",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData
+    });
+  }
+});
+
+app.post("/api/send-welcome", async (req, res) => {
+  const { accountId, to, firstName, welcomeText } = req.body;
+
+  if (!accountId || !to || !firstName || !welcomeText) {
+    return res.status(400).json({
+      error: "Faltan datos requeridos",
+      required: ["accountId", "to", "firstName", "welcomeText"]
+    });
+  }
+
+  const account = getAccount(accountId);
+  if (!account) {
+    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
+  }
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, "").replace(/^0+/, "");
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    const result = await sendTextMessage(
+      accountId,
+      cleanPhone,
+      `Hola ${firstName}, ${welcomeText}`
+    );
+
+    res.json({
+      status: "sent",
+      phone: cleanPhone,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando bienvenida:", error?.response?.data || error);
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar la bienvenida",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
       fullError: errData
