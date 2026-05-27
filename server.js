@@ -487,12 +487,12 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
 });
 
 app.post("/api/send-welcome", async (req, res) => {
-  const { accountId, to, firstName, welcomeText } = req.body;
+  const { accountId, to, userName, eventName } = req.body;
 
-  if (!accountId || !to || !firstName || !welcomeText) {
+  if (!accountId || !to || !userName || !eventName) {
     return res.status(400).json({
       error: "Faltan datos requeridos",
-      required: ["accountId", "to", "firstName", "welcomeText"]
+      required: ["accountId", "to", "userName", "eventName"]
     });
   }
 
@@ -507,10 +507,12 @@ app.post("/api/send-welcome", async (req, res) => {
       return res.status(400).json({ error: "Número de teléfono inválido" });
     }
 
-    const result = await sendTextMessage(
+    const result = await sendTemplateWithParams(
       accountId,
       cleanPhone,
-      `Hola ${firstName}, ${welcomeText}`
+      'bienvenida_magnetic',
+      [userName, eventName],
+      'es'
     );
 
     res.json({
