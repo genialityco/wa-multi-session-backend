@@ -487,12 +487,12 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
 });
 
 app.post("/api/send-welcome", async (req, res) => {
-  const { accountId, to, userName, eventName } = req.body;
+  const { accountId, to, userName, eventName, badgeUrl, date = "Por definir", time = "Por definir" } = req.body;
 
-  if (!accountId || !to || !userName || !eventName) {
+  if (!accountId || !to || !userName || !eventName || !badgeUrl) {
     return res.status(400).json({
       error: "Faltan datos requeridos",
-      required: ["accountId", "to", "userName", "eventName"]
+      required: ["accountId", "to", "userName", "eventName", "badgeUrl"]
     });
   }
 
@@ -507,12 +507,44 @@ app.post("/api/send-welcome", async (req, res) => {
       return res.status(400).json({ error: "Número de teléfono inválido" });
     }
 
-    const result = await sendTemplateWithParams(
+    const bodyParams = [
+      { type: "text", text: String(userName).trim() },
+      { type: "text", text: String(eventName).trim() },
+      { type: "text", text: String(date).trim() },
+      { type: "text", text: String(time).trim() }
+    ];
+
+    const buttonParams = [
+      {
+        type: "button",
+        sub_type: "URL",
+        index: "0",
+        parameters: [
+          { type: "text", text: String(badgeUrl).trim() }
+        ]
+      }
+    ];
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to: cleanPhone,
+      type: "template",
+      template: {
+        name: "bienvenida_magnetic",
+        language: { code: "es" },
+        components: [
+          {
+            type: "body",
+            parameters: bodyParams
+          },
+          ...buttonParams
+        ]
+      }
+    };
+
+    const result = await sendTemplateWithButtons(
       accountId,
-      cleanPhone,
-      'bienvenida_magnetic',
-      [userName, eventName],
-      'es'
+      payload
     );
 
     res.json({
