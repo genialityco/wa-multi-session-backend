@@ -43,7 +43,48 @@ export function listAccounts() {
 }
 
 /**
+ * Sube una media (imagen/documento) a WhatsApp Cloud API y devuelve su ID
+ * @param {string} accountId - ID de la cuenta
+ * @param {string} mediaUrl - URL del archivo a descargar y subir
+ */
+export async function uploadMedia(accountId, mediaUrl) {
+  const account = getAccount(accountId);
+  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
+
+  try {
+    const response = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+    const buffer = response.data;
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    
+    let ext = 'jpg';
+    if (contentType.includes('png')) ext = 'png';
+    else if (contentType.includes('webp')) ext = 'webp';
+    else if (contentType.includes('pdf')) ext = 'pdf';
+
+    const filename = `file.${ext}`;
+
+    const formData = new FormData();
+    formData.append('messaging_product', 'whatsapp');
+    formData.append('file', new Blob([buffer], { type: contentType }), filename);
+
+    const uploadUrl = `${WHATSAPP_API_URL}/${account.phoneNumberId}/media`;
+
+    const uploadResponse = await axios.post(uploadUrl, formData, {
+      headers: {
+        'Authorization': `Bearer ${account.accessToken}`
+      }
+    });
+
+    return uploadResponse.data.id;
+  } catch (error) {
+    console.error('Error subiendo media a WhatsApp:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
  * Envía un mensaje de texto
+
  * @param {string} accountId - ID de la cuenta
  * @param {string} to - Número de teléfono del destinatario
  * @param {string} message - Texto del mensaje

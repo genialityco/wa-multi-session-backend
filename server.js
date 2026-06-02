@@ -18,7 +18,8 @@ import {
   sendTextMessage,
   sendTemplateWithParams,
   sendTemplateWithButtons,
-  removeAccount
+  removeAccount,
+  uploadMedia
 } from "./services/whatsappApi.js";
 
 dotenv.config();
@@ -487,12 +488,12 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
 });
 
 app.post("/api/send-welcome", async (req, res) => {
-  const { accountId, to, userName, eventName, badgeUrl, date = "Por definir", time = "Por definir" } = req.body;
+  const { accountId, to, userName, eventName, badgeUrl, headerImageUrl, date = "Por definir", time = "Por definir" } = req.body;
 
-  if (!accountId || !to || !userName || !eventName || !badgeUrl) {
+  if (!accountId || !to || !userName || !eventName || !badgeUrl || !headerImageUrl) {
     return res.status(400).json({
       error: "Faltan datos requeridos",
-      required: ["accountId", "to", "userName", "eventName", "badgeUrl"]
+      required: ["accountId", "to", "userName", "eventName", "badgeUrl", "headerImageUrl"]
     });
   }
 
@@ -506,6 +507,20 @@ app.post("/api/send-welcome", async (req, res) => {
     if (cleanPhone.length < 10 || cleanPhone.length > 15) {
       return res.status(400).json({ error: "Número de teléfono inválido" });
     }
+
+    const mediaId = await uploadMedia(accountId, headerImageUrl);
+
+    const headerParams = {
+      type: "header",
+      parameters: [
+        {
+          type: "image",
+          image: {
+            id: mediaId
+          }
+        }
+      ]
+    };
 
     const bodyParams = [
       { type: "text", text: String(userName).trim() },
@@ -533,6 +548,7 @@ app.post("/api/send-welcome", async (req, res) => {
         name: "bienvenida_magnetic",
         language: { code: "es" },
         components: [
+          headerParams,
           {
             type: "body",
             parameters: bodyParams
