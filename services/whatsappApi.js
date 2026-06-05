@@ -263,6 +263,7 @@ export async function sendTemplateWithButtons(accountId, payload) {
         'Content-Type': 'application/json'
       }
     });
+    console.log("Respuesta de Meta enviando template con botones:", JSON.stringify(response.data));
     return response.data;
   } catch (error) {
     console.error('Error enviando template con botones:', error.response?.data || error.message);

@@ -21,6 +21,12 @@ import {
   removeAccount,
   uploadMedia
 } from "./services/whatsappApi.js";
+import { 
+  tryEmailFallback, 
+  registerFallbackForMessage, 
+  triggerFallbackFromWebhook 
+} from "./services/emailFallback.js";
+import { processIncomingMessage } from "./services/webhookHandler.js";
 
 dotenv.config();
 const app = express();
@@ -69,6 +75,7 @@ app.post("/webhook", async (req, res) => {
         for (const change of entry.changes) {
           if (change.field === 'messages') {
             const messages = change.value.messages;
+            const statuses = change.value.statuses;
             
             if (messages) {
               for (const message of messages) {
@@ -78,6 +85,15 @@ app.post("/webhook", async (req, res) => {
                     text: message.text,
                     timestamp: message.timestamp
                   });
+                }
+              }
+            }
+
+            if (statuses) {
+              for (const status of statuses) {
+                if (status.status === 'failed') {
+                  console.log(`⚠️ Webhook reporta fallo de entrega en Meta. ID: ${status.id}`);
+                  await triggerFallbackFromWebhook(status.id);
                 }
               }
             }
@@ -134,7 +150,8 @@ app.post("/api/send", async (req, res) => {
       res.json({ status: "sent", id: sendResult.id._serialized });
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const fallbackSent = await tryEmailFallback(req.body);
+    res.status(500).json({ error: err.message, fallbackEmailSent: fallbackSent });
   }
 });
 
@@ -247,22 +264,28 @@ app.post("/api/send-meeting-request", async (req, res) => {
       payload   // ← ahora pasamos el payload completo en lugar de argumentos separados
     );
 
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
     res.json({
       status: "sent",
       phone: cleanPhone,
-      messageId: result?.messages?.[0]?.id,
+      messageId: msgId,
       result
     });
 
   } catch (error) {
     console.error("Error enviando template:", error?.response?.data || error);
 
+    const fallbackSent = await tryEmailFallback(req.body);
+
     const errData = error?.response?.data || {};
     res.status(500).json({ 
       error: "Error al enviar el mensaje",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
-      fullError: errData
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
     });
   }
 });
@@ -324,21 +347,27 @@ app.post("/api/send-meeting-confirmation", async (req, res) => {
       'es'
     );
 
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
     res.json({
       status: 'sent',
       phone: cleanPhone,
-      messageId: result.messages?.[0]?.id,
+      messageId: msgId,
       result
     });
   } catch (error) {
     console.error("Error enviando confirmación:", error?.response?.data || error);
     
+    const fallbackSent = await tryEmailFallback(req.body);
+
     const errData = error?.response?.data || {};
     res.status(500).json({ 
       error: "Error al enviar la confirmación",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
-      fullError: errData
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
     });
   }
 });
@@ -400,21 +429,27 @@ app.post("/api/send-meeting-cancelled", async (req, res) => {
       'es'
     );
 
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
     res.json({
       status: 'sent',
       phone: cleanPhone,
-      messageId: result.messages?.[0]?.id,
+      messageId: msgId,
       result
     });
   } catch (error) {
     console.error("Error enviando cancelación:", error?.response?.data || error);
     
+    const fallbackSent = await tryEmailFallback(req.body);
+
     const errData = error?.response?.data || {};
     res.status(500).json({ 
       error: "Error al enviar la cancelación",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
-      fullError: errData
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
     });
   }
 });
@@ -468,21 +503,27 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
       'es'
     );
 
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
     res.json({
       status: 'sent',
       phone: cleanPhone,
-      messageId: result.messages?.[0]?.id,
+      messageId: msgId,
       result
     });
   } catch (error) {
     console.error("Error enviando rechazo:", error?.response?.data || error);
     
+    const fallbackSent = await tryEmailFallback(req.body);
+
     const errData = error?.response?.data || {};
     res.status(500).json({ 
       error: "Error al enviar el rechazo",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
-      fullError: errData
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
     });
   }
 });
@@ -563,19 +604,27 @@ app.post("/api/send-welcome", async (req, res) => {
       payload
     );
 
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
     res.json({
       status: "sent",
       phone: cleanPhone,
+      messageId: msgId,
       result
     });
   } catch (error) {
     console.error("Error enviando bienvenida:", error?.response?.data || error);
+    
+    const fallbackSent = await tryEmailFallback(req.body);
+
     const errData = error?.response?.data || {};
     res.status(500).json({
       error: "Error al enviar la bienvenida",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
-      fullError: errData
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
     });
   }
 });
