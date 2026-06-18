@@ -629,6 +629,159 @@ app.post("/api/send-welcome", async (req, res) => {
   }
 });
 
+app.post("/api/send-projection-notification", async (req, res) => {
+  const { accountId, to, experienceName, userName } = req.body;
+
+  if (!accountId || !to || !experienceName || !userName) {
+    return res.status(400).json({
+      error: "Faltan datos requeridos",
+      required: ["accountId", "to", "experienceName", "userName"]
+    });
+  }
+
+  const account = getAccount(accountId);
+  if (!account) {
+    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
+  }
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, "").replace(/^0+/, "");
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to: cleanPhone,
+      type: "template",
+      template: {
+        name: "notificacion_proyeccion_comuna13",
+        language: { code: "es" },
+        components: [
+          {
+            type: "header",
+            parameters: [
+              { type: "text", text: String(experienceName).trim().substring(0, 60) }
+            ]
+          },
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: String(userName).trim() }
+            ]
+          }
+        ]
+      }
+    };
+
+    const result = await sendTemplateWithButtons(accountId, payload);
+
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
+    res.json({
+      status: "sent",
+      phone: cleanPhone,
+      messageId: msgId,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando notificación de proyección:", error?.response?.data || error);
+    
+    const fallbackSent = await tryEmailFallback(req.body);
+
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar la notificación de proyección",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
+    });
+  }
+});
+
+app.post("/api/send-image-result", async (req, res) => {
+  const { accountId, to, imageUrl, userName, experienceName, organizationName } = req.body;
+
+  if (!accountId || !to || !imageUrl || !userName || !experienceName || !organizationName) {
+    return res.status(400).json({
+      error: "Faltan datos requeridos",
+      required: ["accountId", "to", "imageUrl", "userName", "experienceName", "organizationName"]
+    });
+  }
+
+  const account = getAccount(accountId);
+  if (!account) {
+    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
+  }
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, "").replace(/^0+/, "");
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    const mediaId = await uploadMedia(accountId, imageUrl);
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to: cleanPhone,
+      type: "template",
+      template: {
+        name: "notificacion_resultado_imagen",
+        language: { code: "es" },
+        components: [
+          {
+            type: "header",
+            parameters: [
+              {
+                type: "image",
+                image: {
+                  id: mediaId
+                }
+              }
+            ]
+          },
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: String(userName).trim() },
+              { type: "text", text: String(experienceName).trim() },
+              { type: "text", text: String(organizationName).trim() }
+            ]
+          }
+        ]
+      }
+    };
+
+    const result = await sendTemplateWithButtons(accountId, payload);
+
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
+    res.json({
+      status: "sent",
+      phone: cleanPhone,
+      messageId: msgId,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando resultado de imagen:", error?.response?.data || error);
+    
+    const fallbackSent = await tryEmailFallback(req.body);
+
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar el resultado de imagen",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
+    });
+  }
+});
+
 app.post("/api/account/register", (req, res) => {
   const { accountId, phoneNumberId, accessToken } = req.body;
   
