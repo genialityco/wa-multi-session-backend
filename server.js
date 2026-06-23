@@ -529,7 +529,7 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
 });
 
 app.post("/api/send-welcome", async (req, res) => {
-  const { accountId, to, userName, eventName, badgeUrl, headerImageUrl, date = "Por definir", time = "Por definir" } = req.body;
+  const { accountId, to, userName, eventName, badgeUrl, headerImageUrl, date = "Por definir", time = "Por definir", sendEmail } = req.body;
 
   if (!accountId || !to || !userName || !eventName || !badgeUrl || !headerImageUrl) {
     return res.status(400).json({
@@ -605,13 +605,20 @@ app.post("/api/send-welcome", async (req, res) => {
     );
 
     const msgId = result?.messages?.[0]?.id;
-    if (msgId) registerFallbackForMessage(msgId, req.body);
+    let emailSent = false;
+    
+    if (sendEmail) {
+      emailSent = await tryEmailFallback(req.body);
+    } else if (msgId) {
+      registerFallbackForMessage(msgId, req.body);
+    }
 
     res.json({
       status: "sent",
       phone: cleanPhone,
       messageId: msgId,
-      result
+      result,
+      emailSent
     });
   } catch (error) {
     console.error("Error enviando bienvenida:", error?.response?.data || error);
