@@ -789,6 +789,63 @@ app.post("/api/send-image-result", async (req, res) => {
   }
 });
 
+// API genérica: enviar cualquier plantilla aprobada, sin endpoint dedicado por plantilla
+app.post("/api/send-template", async (req, res) => {
+  const { accountId, to, templateName, parameters = [], languageCode = 'es' } = req.body;
+
+  if (!accountId || !to || !templateName) {
+    return res.status(400).json({
+      error: "Faltan datos: accountId, to, templateName"
+    });
+  }
+
+  const account = getAccount(accountId);
+  if (!account) {
+    return res.status(404).json({
+      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.`
+    });
+  }
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    const result = await sendTemplateWithParams(
+      accountId,
+      cleanPhone,
+      templateName,
+      parameters,
+      languageCode
+    );
+
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
+    res.json({
+      status: "sent",
+      phone: cleanPhone,
+      templateName,
+      messageId: msgId,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando plantilla:", error?.response?.data || error);
+
+    const fallbackSent = await tryEmailFallback(req.body);
+
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar la plantilla",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
+    });
+  }
+});
+
 app.post("/api/account/register", (req, res) => {
   const { accountId, phoneNumberId, accessToken } = req.body;
   
