@@ -6,56 +6,29 @@ dotenv.config();
 
 const WHATSAPP_API_URL = 'https://graph.facebook.com/v22.0';
 
-// Configuración de cuentas (puedes tener múltiples)
-const accounts = {};
+const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
 
-/**
- * Registra una cuenta de WhatsApp Business
- * @param {string} accountId - ID único de la cuenta
- * @param {string} phoneNumberId - ID del número de teléfono de WhatsApp Business
- * @param {string} accessToken - Token de acceso de la API
- */
-export function registerAccount(accountId, phoneNumberId, accessToken) {
-  accounts[accountId] = {
-    phoneNumberId,
-    accessToken,
-    apiUrl: `${WHATSAPP_API_URL}/${phoneNumberId}/messages`
-  };
-  console.log(`✅ Cuenta registrada: ${accountId}`);
+if (!phoneNumberId || !accessToken) {
+  console.warn('⚠️ WHATSAPP_PHONE_NUMBER_ID o WHATSAPP_ACCESS_TOKEN no están configurados en el .env');
 }
 
-/**
- * Obtiene una cuenta registrada
- */
-export function getAccount(accountId) {
-  return accounts[accountId] || null;
-}
-
-/**
- * Lista todas las cuentas registradas
- */
-export function listAccounts() {
-  return Object.keys(accounts).map(id => ({
-    accountId: id,
-    phoneNumberId: accounts[id].phoneNumberId,
-    status: 'ready'
-  }));
-}
+const account = {
+  phoneNumberId,
+  accessToken,
+  apiUrl: `${WHATSAPP_API_URL}/${phoneNumberId}/messages`
+};
 
 /**
  * Sube una media (imagen/documento) a WhatsApp Cloud API y devuelve su ID
- * @param {string} accountId - ID de la cuenta
  * @param {string} mediaUrl - URL del archivo a descargar y subir
  */
-export async function uploadMedia(accountId, mediaUrl) {
-  const account = getAccount(accountId);
-  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
-
+export async function uploadMedia(mediaUrl) {
   try {
     const response = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
     const buffer = response.data;
     const contentType = response.headers['content-type'] || 'image/jpeg';
-    
+
     let ext = 'jpg';
     if (contentType.includes('png')) ext = 'png';
     else if (contentType.includes('webp')) ext = 'webp';
@@ -85,23 +58,19 @@ export async function uploadMedia(accountId, mediaUrl) {
 /**
  * Envía un mensaje de texto
 
- * @param {string} accountId - ID de la cuenta
  * @param {string} to - Número de teléfono del destinatario
  * @param {string} message - Texto del mensaje
  * @param {boolean} previewUrl - Habilitar preview de URLs (default: false)
  */
-export async function sendTextMessage(accountId, to, message, previewUrl = false) {
-  const account = getAccount(accountId);
-  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
-
+export async function sendTextMessage(to, message, previewUrl = false) {
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
     to: to,
     type: 'text',
-    text: { 
+    text: {
       preview_url: previewUrl,
-      body: message 
+      body: message
     }
   };
   console.log("payload axios: ", payload)
@@ -122,10 +91,7 @@ export async function sendTextMessage(accountId, to, message, previewUrl = false
 /**
  * Envía una imagen con caption opcional
  */
-export async function sendImageMessage(accountId, to, imageUrl, caption = '') {
-  const account = getAccount(accountId);
-  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
-
+export async function sendImageMessage(to, imageUrl, caption = '') {
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -157,10 +123,7 @@ export async function sendImageMessage(accountId, to, imageUrl, caption = '') {
 /**
  * Envía un template (como hello_world)
  */
-export async function sendTemplate(accountId, to, templateName, languageCode = 'en_US') {
-  const account = getAccount(accountId);
-  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
-
+export async function sendTemplate(to, templateName, languageCode = 'en_US') {
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -190,18 +153,14 @@ export async function sendTemplate(accountId, to, templateName, languageCode = '
 
 /**
  * Envía un template utility con parámetros
- * @param {string} accountId - ID de la cuenta
  * @param {string} to - Número de teléfono del destinatario
  * @param {string} templateName - Nombre del template
  * @param {Array<string>} parameters - Parámetros para el template
  * @param {string} languageCode - Código de idioma (default: es_MX)
  */
-export async function sendTemplateWithParams(accountId, to, templateName, parameters = [], languageCode = 'es_MX') {
-  const account = getAccount(accountId);
-  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
-
+export async function sendTemplateWithParams(to, templateName, parameters = [], languageCode = 'es_MX') {
   const components = [];
-  
+
   if (parameters.length > 0) {
     components.push({
       type: 'body',
@@ -242,21 +201,10 @@ export async function sendTemplateWithParams(accountId, to, templateName, parame
 
 /**
  * Envía un template utility con parámetros y botones de acción
- * @param {string} accountId - ID de la cuenta
- * @param {string} to - Número de teléfono del destinatario
- * @param {string} templateName - Nombre del template
- * @param {Array<string>} bodyParameters - Parámetros para el cuerpo del mensaje
- * @param {Array<Object>} buttons - Botones de acción [{type: 'URL', text: 'Aceptar', url: 'https://...'}]
- * @param {string} languageCode - Código de idioma (default: es_MX)
+ * @param {Object} payload - Payload completo del template (body/header/botones)
  */
-export async function sendTemplateWithButtons(accountId, payload) {
-  const account = getAccount(accountId);
-  if (!account) throw new Error(`Cuenta ${accountId} no encontrada`);
-
-
-
+export async function sendTemplateWithButtons(payload) {
   try {
-
     const response = await axios.post(account.apiUrl, payload, {
       headers: {
         'Authorization': `Bearer ${account.accessToken}`,
@@ -269,16 +217,4 @@ export async function sendTemplateWithButtons(accountId, payload) {
     console.error('Error enviando template con botones:', error.response?.data || error.message);
     throw error;
   }
-}
-
-/**
- * Elimina una cuenta registrada
- */
-export function removeAccount(accountId) {
-  if (accounts[accountId]) {
-    delete accounts[accountId];
-    console.log(`🗑️ Cuenta eliminada: ${accountId}`);
-    return true;
-  }
-  return false;
 }

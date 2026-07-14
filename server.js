@@ -12,21 +12,18 @@ import {
   MessageMedia, // 👈 IMPORTANTE
 } from "./sessions/sessionManager.js";
 import {
-  registerAccount,
-  getAccount,
-  listAccounts,
   sendTextMessage,
   sendTemplateWithParams,
   sendTemplateWithButtons,
-  removeAccount,
   uploadMedia
 } from "./services/whatsappApi.js";
-import { 
-  tryEmailFallback, 
-  registerFallbackForMessage, 
-  triggerFallbackFromWebhook 
+import {
+  tryEmailFallback,
+  registerFallbackForMessage,
+  triggerFallbackFromWebhook
 } from "./services/emailFallback.js";
 import { processIncomingMessage } from "./services/webhookHandler.js";
+import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
 
 dotenv.config();
 const app = express();
@@ -73,28 +70,37 @@ app.post("/webhook", async (req, res) => {
     if (body.object === 'whatsapp_business_account') {
       for (const entry of body.entry) {
         for (const change of entry.changes) {
-          if (change.field === 'messages') {
-            const messages = change.value.messages;
-            const statuses = change.value.statuses;
-            
-            if (messages) {
-              for (const message of messages) {
-                if (message.type === 'text') {
-                  await processIncomingMessage({
-                    from: message.from,
-                    text: message.text,
-                    timestamp: message.timestamp
-                  });
-                }
+          if (change.field !== 'messages') continue;
+
+          // Ambos números comparten la misma cuenta de WhatsApp Business, por lo que
+          // Meta llama a esta misma URL para los dos. Si el evento pertenece al número
+          // secundario, se reenvía a su propio backend en vez de procesarlo aquí.
+          const phoneNumberId = change.value?.metadata?.phone_number_id;
+          if (belongsToSecondaryNumber(phoneNumberId)) {
+            await forwardToSecondaryWebhook(entry, change);
+            continue;
+          }
+
+          const messages = change.value.messages;
+          const statuses = change.value.statuses;
+
+          if (messages) {
+            for (const message of messages) {
+              if (message.type === 'text') {
+                await processIncomingMessage({
+                  from: message.from,
+                  text: message.text,
+                  timestamp: message.timestamp
+                });
               }
             }
+          }
 
-            if (statuses) {
-              for (const status of statuses) {
-                if (status.status === 'failed') {
-                  console.log(`⚠️ Webhook reporta fallo de entrega en Meta. ID: ${status.id}`);
-                  await triggerFallbackFromWebhook(status.id);
-                }
+          if (statuses) {
+            for (const status of statuses) {
+              if (status.status === 'failed') {
+                console.log(`⚠️ Webhook reporta fallo de entrega en Meta. ID: ${status.id}`);
+                await triggerFallbackFromWebhook(status.id);
               }
             }
           }
@@ -156,9 +162,8 @@ app.post("/api/send", async (req, res) => {
 });
 
 app.post("/api/send-meeting-request", async (req, res) => {
-  const { 
-    accountId, 
-    to, 
+  const {
+    to,
     eventName = "",
     requesterName = "",
     requesterCompany = "",
@@ -171,20 +176,15 @@ app.post("/api/send-meeting-request", async (req, res) => {
   } = req.body;
 
   // Validación básica mejorada
-  const required = [accountId, to, eventName, requesterName, requesterCompany, 
-                    requesterPosition, requesterEmail, requesterPhone, message, 
+  const required = [to, eventName, requesterName, requesterCompany,
+                    requesterPosition, requesterEmail, requesterPhone, message,
                     acceptUrl, cancelUrl];
 
   if (required.some(val => !val)) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: "Faltan datos requeridos",
       example: "Todos los campos son obligatorios"
     });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
   }
 
   try {
@@ -259,10 +259,7 @@ app.post("/api/send-meeting-request", async (req, res) => {
 
     // Aquí llamas a tu función que hace el POST real a https://graph.facebook.com/v19.0/.../messages
     // (ajusta según tu librería o implementación)
-    const result = await sendTemplateWithButtons(
-      accountId,
-      payload   // ← ahora pasamos el payload completo en lugar de argumentos separados
-    );
+    const result = await sendTemplateWithButtons(payload);
 
     const msgId = result?.messages?.[0]?.id;
     if (msgId) registerFallbackForMessage(msgId, req.body);
@@ -291,9 +288,8 @@ app.post("/api/send-meeting-request", async (req, res) => {
 });
 
 app.post("/api/send-meeting-confirmation", async (req, res) => {
-  const { 
-    accountId, 
-    to, 
+  const {
+    to,
     eventName,
     acceptedBy,
     meetingWith,
@@ -301,22 +297,15 @@ app.post("/api/send-meeting-confirmation", async (req, res) => {
     schedule,
     table
   } = req.body;
-  
-  if (!accountId || !to || !eventName || !acceptedBy || !meetingWith || 
+
+  if (!to || !eventName || !acceptedBy || !meetingWith ||
       !company || !schedule || !table) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: "Faltan datos requeridos",
       required: [
-        "accountId", "to", "eventName", "acceptedBy", "meetingWith",
+        "to", "eventName", "acceptedBy", "meetingWith",
         "company", "schedule", "table"
       ]
-    });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ 
-      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.` 
     });
   }
 
@@ -340,7 +329,6 @@ app.post("/api/send-meeting-confirmation", async (req, res) => {
 
     // Enviar template sin botones
     const result = await sendTemplateWithParams(
-      accountId,
       cleanPhone,
       'confirmacion_reunion',  // Nombre del template
       bodyParameters,
@@ -373,9 +361,8 @@ app.post("/api/send-meeting-confirmation", async (req, res) => {
 });
 
 app.post("/api/send-meeting-cancelled", async (req, res) => {
-  const { 
-    accountId, 
-    to, 
+  const {
+    to,
     eventName,
     meetingWith,
     company,
@@ -383,22 +370,15 @@ app.post("/api/send-meeting-cancelled", async (req, res) => {
     schedule,
     table
   } = req.body;
-  
-  if (!accountId || !to || !eventName || !meetingWith || 
+
+  if (!to || !eventName || !meetingWith ||
       !company || !day || !schedule || !table) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: "Faltan datos requeridos",
       required: [
-        "accountId", "to", "eventName", "meetingWith",
+        "to", "eventName", "meetingWith",
         "company", "day", "schedule", "table"
       ]
-    });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ 
-      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.` 
     });
   }
 
@@ -422,7 +402,6 @@ app.post("/api/send-meeting-cancelled", async (req, res) => {
 
     // Enviar template sin botones
     const result = await sendTemplateWithParams(
-      accountId,
       cleanPhone,
       'reunion_cancelada',  // Nombre del template
       bodyParameters,
@@ -455,27 +434,19 @@ app.post("/api/send-meeting-cancelled", async (req, res) => {
 });
 
 app.post("/api/send-meeting-rejection", async (req, res) => {
-  const { 
-    accountId, 
-    to, 
+  const {
+    to,
     eventName,
     rejectedByName,
     rejectedByCompany
   } = req.body;
-  
-  if (!accountId || !to || !eventName || !rejectedByName || !rejectedByCompany) {
-    return res.status(400).json({ 
+
+  if (!to || !eventName || !rejectedByName || !rejectedByCompany) {
+    return res.status(400).json({
       error: "Faltan datos requeridos",
       required: [
-        "accountId", "to", "eventName", "rejectedByName", "rejectedByCompany"
+        "to", "eventName", "rejectedByName", "rejectedByCompany"
       ]
-    });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ 
-      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.` 
     });
   }
 
@@ -496,7 +467,6 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
 
     // Enviar template sin botones
     const result = await sendTemplateWithParams(
-      accountId,
       cleanPhone,
       'rechazo_solicitud',  // Nombre del template
       bodyParameters,
@@ -529,18 +499,13 @@ app.post("/api/send-meeting-rejection", async (req, res) => {
 });
 
 app.post("/api/send-welcome", async (req, res) => {
-  const { accountId, to, userName, eventName, badgeUrl, headerImageUrl, date = "Por definir", time = "Por definir", sendEmail } = req.body;
+  const { to, userName, eventName, badgeUrl, headerImageUrl, date = "Por definir", time = "Por definir", sendEmail } = req.body;
 
-  if (!accountId || !to || !userName || !eventName || !badgeUrl || !headerImageUrl) {
+  if (!to || !userName || !eventName || !badgeUrl || !headerImageUrl) {
     return res.status(400).json({
       error: "Faltan datos requeridos",
-      required: ["accountId", "to", "userName", "eventName", "badgeUrl", "headerImageUrl"]
+      required: ["to", "userName", "eventName", "badgeUrl", "headerImageUrl"]
     });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
   }
 
   try {
@@ -549,7 +514,7 @@ app.post("/api/send-welcome", async (req, res) => {
       return res.status(400).json({ error: "Número de teléfono inválido" });
     }
 
-    const mediaId = await uploadMedia(accountId, headerImageUrl);
+    const mediaId = await uploadMedia(headerImageUrl);
 
     const headerParams = {
       type: "header",
@@ -599,10 +564,7 @@ app.post("/api/send-welcome", async (req, res) => {
       }
     };
 
-    const result = await sendTemplateWithButtons(
-      accountId,
-      payload
-    );
+    const result = await sendTemplateWithButtons(payload);
 
     const msgId = result?.messages?.[0]?.id;
     let emailSent = false;
@@ -637,18 +599,13 @@ app.post("/api/send-welcome", async (req, res) => {
 });
 
 app.post("/api/send-projection-notification", async (req, res) => {
-  const { accountId, to, experienceName, userName } = req.body;
+  const { to, experienceName, userName } = req.body;
 
-  if (!accountId || !to || !experienceName || !userName) {
+  if (!to || !experienceName || !userName) {
     return res.status(400).json({
       error: "Faltan datos requeridos",
-      required: ["accountId", "to", "experienceName", "userName"]
+      required: ["to", "experienceName", "userName"]
     });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
   }
 
   try {
@@ -681,7 +638,7 @@ app.post("/api/send-projection-notification", async (req, res) => {
       }
     };
 
-    const result = await sendTemplateWithButtons(accountId, payload);
+    const result = await sendTemplateWithButtons(payload);
 
     const msgId = result?.messages?.[0]?.id;
     if (msgId) registerFallbackForMessage(msgId, req.body);
@@ -709,18 +666,13 @@ app.post("/api/send-projection-notification", async (req, res) => {
 });
 
 app.post("/api/send-image-result", async (req, res) => {
-  const { accountId, to, imageUrl, userName, experienceName, organizationName } = req.body;
+  const { to, imageUrl, userName, experienceName, organizationName } = req.body;
 
-  if (!accountId || !to || !imageUrl || !userName || !experienceName || !organizationName) {
+  if (!to || !imageUrl || !userName || !experienceName || !organizationName) {
     return res.status(400).json({
       error: "Faltan datos requeridos",
-      required: ["accountId", "to", "imageUrl", "userName", "experienceName", "organizationName"]
+      required: ["to", "imageUrl", "userName", "experienceName", "organizationName"]
     });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({ error: `Cuenta ${accountId} no encontrada` });
   }
 
   try {
@@ -729,7 +681,7 @@ app.post("/api/send-image-result", async (req, res) => {
       return res.status(400).json({ error: "Número de teléfono inválido" });
     }
 
-    const mediaId = await uploadMedia(accountId, imageUrl);
+    const mediaId = await uploadMedia(imageUrl);
 
     const payload = {
       messaging_product: "whatsapp",
@@ -762,7 +714,7 @@ app.post("/api/send-image-result", async (req, res) => {
       }
     };
 
-    const result = await sendTemplateWithButtons(accountId, payload);
+    const result = await sendTemplateWithButtons(payload);
 
     const msgId = result?.messages?.[0]?.id;
     if (msgId) registerFallbackForMessage(msgId, req.body);
@@ -791,18 +743,11 @@ app.post("/api/send-image-result", async (req, res) => {
 
 // API genérica: enviar cualquier plantilla aprobada, sin endpoint dedicado por plantilla
 app.post("/api/send-template", async (req, res) => {
-  const { accountId, to, templateName, parameters = [], languageCode = 'es' } = req.body;
+  const { to, templateName, parameters = [], languageCode = 'es' } = req.body;
 
-  if (!accountId || !to || !templateName) {
+  if (!to || !templateName) {
     return res.status(400).json({
-      error: "Faltan datos: accountId, to, templateName"
-    });
-  }
-
-  const account = getAccount(accountId);
-  if (!account) {
-    return res.status(404).json({
-      error: `Cuenta ${accountId} no encontrada. Registra la cuenta primero.`
+      error: "Faltan datos: to, templateName"
     });
   }
 
@@ -813,7 +758,6 @@ app.post("/api/send-template", async (req, res) => {
     }
 
     const result = await sendTemplateWithParams(
-      accountId,
       cleanPhone,
       templateName,
       parameters,
@@ -846,55 +790,12 @@ app.post("/api/send-template", async (req, res) => {
   }
 });
 
-app.post("/api/account/register", (req, res) => {
-  const { accountId, phoneNumberId, accessToken } = req.body;
-  
-  if (!accountId || !phoneNumberId || !accessToken) {
-    return res.status(400).json({ 
-      error: "Faltan datos: accountId, phoneNumberId, accessToken" 
-    });
-  }
-
-  try {
-    registerAccount(accountId, phoneNumberId, accessToken);
-    res.json({ 
-      status: "registered", 
-      accountId,
-      message: "Cuenta registrada exitosamente"
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // API: Cerrar sesión y borrar auth
 app.post("/api/logout", (req, res) => {
   const { clientId } = req.body;
   if (!clientId) return res.status(400).json({ error: "Falta clientId" });
   logoutClient(clientId, io);
   res.json({ status: "logout", clientId });
-});
-
-app.post("/api/account/remove", (req, res) => {
-  const { accountId } = req.body;
-  
-  if (!accountId) {
-    return res.status(400).json({ error: "Falta accountId" });
-  }
-
-  const removed = removeAccount(accountId);
-  
-  if (removed) {
-    res.json({ status: "removed", accountId });
-  } else {
-    res.status(404).json({ error: "Cuenta no encontrada" });
-  }
-});
-
-// API: Listar cuentas registradas
-app.get("/api/accounts", (req, res) => {
-  const accounts = listAccounts();
-  res.json(accounts);
 });
 
 // API: Listar sesiones activas
