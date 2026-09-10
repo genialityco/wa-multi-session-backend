@@ -7,6 +7,9 @@ import axios from 'axios';
  */
 const FIREBASE_SURVEY_FN_URL = process.env.FIREBASE_SURVEY_FN_URL;
 
+/** Secreto compartido con la Cloud Function (opcional). Debe coincidir con SURVEY_WEBHOOK_SECRET en Firebase. */
+const FIREBASE_SURVEY_SECRET = process.env.FIREBASE_SURVEY_SECRET || "geniality-encuesta-webhook";
+
 /** Identificador que viaja en el payload de los botones para reconocer nuestra encuesta. */
 export const SURVEY_TAG = 'encuesta_valor_negocio';
 
@@ -60,7 +63,10 @@ export async function processSurveyButtonReply({ from, payload, buttonText, wami
   }
 
   try {
-    const res = await axios.post(FIREBASE_SURVEY_FN_URL, body, { timeout: 10000 });
+    const res = await axios.post(FIREBASE_SURVEY_FN_URL, body, {
+      timeout: 10000,
+      headers: FIREBASE_SURVEY_SECRET ? { 'x-webhook-secret': FIREBASE_SURVEY_SECRET } : {}
+    });
     console.log(`✅ Respuesta de encuesta almacenada en Firebase para ${from} (evento ${parsed.e}): ${parsed.v}`);
     return res.data;
   } catch (error) {
