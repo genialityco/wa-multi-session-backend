@@ -24,6 +24,7 @@ import {
 } from "./services/emailFallback.js";
 import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
+import { processSurveyButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
 
 dotenv.config();
 const app = express();
@@ -90,6 +91,15 @@ app.post("/webhook", async (req, res) => {
                 await processIncomingMessage({
                   from: message.from,
                   text: message.text,
+                  timestamp: message.timestamp
+                });
+              } else if (message.type === 'button') {
+                // Respuesta a un botón quick reply de plantilla (ej. encuesta de valor de negocio)
+                await processSurveyButtonReply({
+                  from: message.from,
+                  payload: message.button?.payload,
+                  buttonText: message.button?.text,
+                  wamid: message.id,
                   timestamp: message.timestamp
                 });
               }
@@ -733,6 +743,95 @@ app.post("/api/send-image-result", async (req, res) => {
     const errData = error?.response?.data || {};
     res.status(500).json({
       error: "Error al enviar el resultado de imagen",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message,
+      fullError: errData,
+      fallbackEmailSent: fallbackSent
+    });
+  }
+});
+
+// API: enviar la encuesta de valor de negocio (plantilla utility con 3 botones quick reply).
+// El eventId se incrusta en el payload de cada botón y vuelve por el webhook principal.
+// body: { to, name?, eventId }
+app.post("/api/send-encuesta-valor-negocio", async (req, res) => {
+  const { to, name = "", eventId } = req.body;
+
+  if (!to || !eventId) {
+    return res.status(400).json({
+      error: "Faltan datos requeridos",
+      required: ["to", "eventId"]
+    });
+  }
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, "").replace(/^0+/, "");
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to: cleanPhone,
+      type: "template",
+      template: {
+        name: "encuesta_valor_negiocio1",
+        language: { code: "es" },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: String(name).trim() || "Hola" }
+            ]
+          },
+          {
+            type: "button",
+            sub_type: "quick_reply",
+            index: "0",
+            parameters: [
+              { type: "payload", payload: buildSurveyPayload("menos_100M", eventId) }
+            ]
+          },
+          {
+            type: "button",
+            sub_type: "quick_reply",
+            index: "1",
+            parameters: [
+              { type: "payload", payload: buildSurveyPayload("100M_500M", eventId) }
+            ]
+          },
+          {
+            type: "button",
+            sub_type: "quick_reply",
+            index: "2",
+            parameters: [
+              { type: "payload", payload: buildSurveyPayload("mas_500M", eventId) }
+            ]
+          }
+        ]
+      }
+    };
+
+    const result = await sendTemplateWithButtons(payload);
+
+    const msgId = result?.messages?.[0]?.id;
+    if (msgId) registerFallbackForMessage(msgId, req.body);
+
+    res.json({
+      status: "sent",
+      phone: cleanPhone,
+      eventId,
+      messageId: msgId,
+      result
+    });
+  } catch (error) {
+    console.error("Error enviando encuesta de valor de negocio:", error?.response?.data || error);
+
+    const fallbackSent = await tryEmailFallback(req.body);
+
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar la encuesta de valor de negocio",
       code: errData.error?.code,
       details: errData.error?.message || error.message,
       fullError: errData,
