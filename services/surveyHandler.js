@@ -15,7 +15,7 @@ export const SURVEY_TAG = 'encuesta_valor_negocio';
 
 /**
  * Construye el payload que se incrusta en cada botón quick reply.
- * @param {string} valor - valor del rango ("menos_100M" | "100M_500M" | "mas_500M")
+ * @param {string} valor - valor del rango ("menos_100M" | "100M_500M" | "500M_1000M" | "1000M_5000M" | "mas_5000M")
  * @param {string} eventId - id del evento al que pertenece el contacto
  */
 export function buildSurveyPayload(valor, eventId) {
@@ -51,7 +51,7 @@ export async function processSurveyButtonReply({ from, payload, buttonText, wami
   const body = {
     eventId: parsed.e,
     phone: from,
-    answer: parsed.v,        // "menos_100M" | "100M_500M" | "mas_500M"
+    answer: parsed.v,        // menos_100M | 100M_500M | 500M_1000M | 1000M_5000M | mas_5000M
     answerText: buttonText,  // texto legible del botón
     wamid,
     timestamp

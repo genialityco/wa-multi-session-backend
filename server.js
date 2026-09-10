@@ -751,9 +751,16 @@ app.post("/api/send-image-result", async (req, res) => {
   }
 });
 
-// API: enviar la encuesta de valor de negocio (plantilla utility con 3 botones quick reply).
+// API: enviar la encuesta de valor de negocio (plantilla utility con 5 botones quick reply).
 // El eventId se incrusta en el payload de cada botón y vuelve por el webhook principal.
 // body: { to, name?, eventId }
+//
+// Orden de botones en la plantilla encuesta_valor_negiocio2:
+//   0 -> "menos de 100 millones"            -> menos_100M
+//   1 -> "entre 100 y 500 millones"         -> 100M_500M
+//   2 -> "entre 500 y 1000 millones"        -> 500M_1000M
+//   3 -> "entre 1000 y 5000 millones"       -> 1000M_5000M
+//   4 -> "más de 5000 millones"             -> mas_5000M
 app.post("/api/send-encuesta-valor-negocio", async (req, res) => {
   const { to, name = "", eventId } = req.body;
 
@@ -775,7 +782,7 @@ app.post("/api/send-encuesta-valor-negocio", async (req, res) => {
       to: cleanPhone,
       type: "template",
       template: {
-        name: "encuesta_valor_negiocio1",
+        name: "encuesta_valor_negiocio2",
         language: { code: "es" },
         components: [
           {
@@ -805,7 +812,23 @@ app.post("/api/send-encuesta-valor-negocio", async (req, res) => {
             sub_type: "quick_reply",
             index: "2",
             parameters: [
-              { type: "payload", payload: buildSurveyPayload("mas_500M", eventId) }
+              { type: "payload", payload: buildSurveyPayload("500M_1000M", eventId) }
+            ]
+          },
+          {
+            type: "button",
+            sub_type: "quick_reply",
+            index: "3",
+            parameters: [
+              { type: "payload", payload: buildSurveyPayload("1000M_5000M", eventId) }
+            ]
+          },
+          {
+            type: "button",
+            sub_type: "quick_reply",
+            index: "4",
+            parameters: [
+              { type: "payload", payload: buildSurveyPayload("mas_5000M", eventId) }
             ]
           }
         ]
