@@ -863,9 +863,12 @@ app.post("/api/send-encuesta-valor-negocio", async (req, res) => {
   }
 });
 
-// API genérica: enviar cualquier plantilla aprobada, sin endpoint dedicado por plantilla
+// API genérica: enviar cualquier plantilla aprobada, sin endpoint dedicado por plantilla.
+// `parameters` llena el body ({{1}}, {{2}}, ... en orden). `buttonUrl` es opcional: si se
+// envía, se agrega un botón de tipo URL con ese valor como parámetro dinámico (por defecto
+// en el índice 0 — el último botón de la plantilla salvo que pases buttonIndex).
 app.post("/api/send-template", async (req, res) => {
-  const { to, templateName, parameters = [], languageCode = 'es' } = req.body;
+  const { to, templateName, parameters = [], languageCode = 'es', buttonUrl, buttonIndex = '0' } = req.body;
 
   if (!to || !templateName) {
     return res.status(400).json({
@@ -879,12 +882,35 @@ app.post("/api/send-template", async (req, res) => {
       return res.status(400).json({ error: "Número de teléfono inválido" });
     }
 
-    const result = await sendTemplateWithParams(
-      cleanPhone,
-      templateName,
-      parameters,
-      languageCode
-    );
+    let result;
+
+    if (buttonUrl) {
+      // Necesitamos armar el payload completo para incluir el componente de botón.
+      const components = [];
+
+      if (parameters.length > 0) {
+        components.push({
+          type: "body",
+          parameters: parameters.map(param => ({ type: "text", text: String(param) }))
+        });
+      }
+
+      components.push({
+        type: "button",
+        sub_type: "URL",
+        index: String(buttonIndex),
+        parameters: [{ type: "text", text: String(buttonUrl).trim() }]
+      });
+
+      result = await sendTemplateWithButtons({
+        messaging_product: "whatsapp",
+        to: cleanPhone,
+        type: "template",
+        template: { name: templateName, language: { code: languageCode }, components }
+      });
+    } else {
+      result = await sendTemplateWithParams(cleanPhone, templateName, parameters, languageCode);
+    }
 
     const msgId = result?.messages?.[0]?.id;
     if (msgId) registerFallbackForMessage(msgId, req.body);
