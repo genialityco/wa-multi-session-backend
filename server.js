@@ -108,6 +108,8 @@ app.post("/webhook", async (req, res) => {
 
           if (statuses) {
             for (const status of statuses) {
+              const errInfo = status.errors?.length ? ` errors=${JSON.stringify(status.errors)}` : '';
+              console.log(`📬 [Webhook Status] ${status.status} → ${status.recipient_id} (ID: ${status.id})${errInfo}`);
               if (status.status === 'failed') {
                 console.log(`⚠️ Webhook reporta fallo de entrega en Meta. ID: ${status.id}`);
                 await triggerFallbackFromWebhook(status.id);
