@@ -27,9 +27,15 @@ This is a single Express + Socket.IO app (`server.js`) that bridges **two entire
 
 2. **WhatsApp Cloud API (official Meta Graph API) path** — [services/whatsappApi.js](services/whatsappApi.js)
    - Talks directly to `graph.facebook.com` with a per-account `phoneNumberId` + `accessToken`, used for sending pre-approved message *templates* (meeting requests/confirmations/cancellations/rejections, welcome messages, projection/result notifications).
-   - Accounts are registered via `POST /api/account/register` and held **only in the in-memory `accounts` object** in `services/whatsappApi.js` — nothing is persisted to Mongo, so registered accounts are lost on every restart/redeploy and must be re-registered by the caller.
+   - A single account is configured from `.env` (`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`); the `accountId` callers send in request bodies is ignored.
+   - Generic sends: `POST /api/send-template` (body params + one optional dynamic URL button, open like the other `/api/send-*` endpoints).
+   - **Campaigns** (meetings-app bulk sends, called only from its Cloud Functions, require header `x-api-key` = `CAMPAIGN_API_KEY`; endpoints return 503 if it is unset): `GET /api/templates` lists approved templates with components (needs `WHATSAPP_WABA_ID`), `POST /api/campaign/send` sends `{ to, templateName, languageCode, components }` with Meta components pre-built by the caller and propagates Meta's HTTP status (429/5xx = retryable).
    - Sending template messages with dynamic image headers requires uploading the image to Meta first via `uploadMedia()` to get a `media.id`, then referencing that id in the template's header component.
    - Inbound messages/status callbacks from Meta land on `GET/POST /webhook` in `server.js` (GET does the `hub.verify_token` handshake; POST dispatches text messages to `services/webhookHandler.js` and failed-delivery statuses to the email fallback system).
+
+### Quick-reply button replies ([services/surveyHandler.js](services/surveyHandler.js))
+
+`message.type === 'button'` webhook events go to `processButtonReply`, which parses the button payload JSON and forwards it to the meetings-app Cloud Function at `FIREBASE_WA_REPLY_FN_URL` (falls back to `FIREBASE_SURVEY_FN_URL`) with header `x-webhook-secret` = `FIREBASE_SURVEY_SECRET`. Two payload formats: campaigns `{t:"wac", e:eventId, c:campaignId, u:userId, b:buttonIndex}` and the legacy "valor de negocio" survey `{t:"encuesta_valor_negocio", v, e}`. Env vars are read lazily (at call time) because `server.js` runs `dotenv.config()` after imports are evaluated.
 
 ### Email fallback system ([services/emailFallback.js](services/emailFallback.js))
 
