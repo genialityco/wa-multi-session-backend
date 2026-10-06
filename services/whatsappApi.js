@@ -218,3 +218,57 @@ export async function sendTemplateWithButtons(payload) {
     throw error;
   }
 }
+
+/**
+ * Lista las plantillas de la cuenta de WhatsApp Business (WABA), recorriendo la paginación.
+ * Requiere WHATSAPP_WABA_ID en el .env.
+ * @param {Object} opts
+ * @param {string} [opts.status] - filtra por estado (ej. 'APPROVED'); vacío = todas
+ */
+export async function listTemplates({ status = 'APPROVED' } = {}) {
+  const wabaId = process.env.WHATSAPP_WABA_ID;
+  if (!wabaId) {
+    throw new Error('WHATSAPP_WABA_ID no está configurado en el .env');
+  }
+
+  const templates = [];
+  let url = `${WHATSAPP_API_URL}/${wabaId}/message_templates`;
+  let params = {
+    fields: 'id,name,language,status,category,parameter_format,components',
+    limit: 100,
+    ...(status ? { status } : {})
+  };
+
+  // Tope de seguridad para no quedar en un bucle si Meta devuelve paginación cíclica
+  for (let page = 0; url && page < 50; page++) {
+    const response = await axios.get(url, {
+      params,
+      headers: { 'Authorization': `Bearer ${account.accessToken}` }
+    });
+    templates.push(...(response.data?.data || []));
+    // `next` ya trae los query params incluidos
+    url = response.data?.paging?.next || null;
+    params = undefined;
+  }
+
+  return templates;
+}
+
+/**
+ * Envía una plantilla con los `components` de Meta ya armados por el llamador
+ * (header/body/botones). Útil para campañas, donde cada destinatario lleva sus
+ * propios parámetros.
+ */
+export async function sendTemplateComponents(to, templateName, languageCode, components = []) {
+  return sendTemplateWithButtons({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      ...(components.length ? { components } : {})
+    }
+  });
+}

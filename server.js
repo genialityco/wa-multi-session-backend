@@ -15,6 +15,8 @@ import {
   sendTextMessage,
   sendTemplateWithParams,
   sendTemplateWithButtons,
+  sendTemplateComponents,
+  listTemplates,
   uploadMedia
 } from "./services/whatsappApi.js";
 import {
@@ -24,6 +26,7 @@ import {
 } from "./services/emailFallback.js";
 import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
+import { processButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
 import { processSurveyButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
 import { forwardInboundText } from "./services/inboundForwarder.js";
 
@@ -102,8 +105,8 @@ app.post("/webhook", async (req, res) => {
                   timestamp: message.timestamp
                 });
               } else if (message.type === 'button') {
-                // Respuesta a un botón quick reply de plantilla (ej. encuesta de valor de negocio)
-                await processSurveyButtonReply({
+                // Respuesta a un botón quick reply de plantilla (campañas y encuesta de valor de negocio)
+                await processButtonReply({
                   from: message.from,
                   payload: message.button?.payload,
                   buttonText: message.button?.text,
@@ -116,6 +119,8 @@ app.post("/webhook", async (req, res) => {
 
           if (statuses) {
             for (const status of statuses) {
+              const errInfo = status.errors?.length ? ` errors=${JSON.stringify(status.errors)}` : '';
+              console.log(`📬 [Webhook Status] ${status.status} → ${status.recipient_id} (ID: ${status.id})${errInfo}`);
               if (status.status === 'failed') {
                 console.log(`⚠️ Webhook reporta fallo de entrega en Meta. ID: ${status.id}`);
                 await triggerFallbackFromWebhook(status.id);
@@ -942,6 +947,76 @@ app.post("/api/send-template", async (req, res) => {
       details: errData.error?.message || error.message,
       fullError: errData,
       fallbackEmailSent: fallbackSent
+    });
+  }
+});
+
+// ============================================================================
+// CAMPAÑAS (llamadas solo desde Cloud Functions de meetings-app)
+// ============================================================================
+
+// Exige el header x-api-key = CAMPAIGN_API_KEY. Si la variable no está
+// configurada, los endpoints quedan deshabilitados (falla cerrado).
+const requireCampaignApiKey = (req, res, next) => {
+  const expected = process.env.CAMPAIGN_API_KEY;
+  if (!expected) {
+    return res.status(503).json({ error: "CAMPAIGN_API_KEY no está configurado en el servidor" });
+  }
+  if (req.get("x-api-key") !== expected) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
+
+// Lista las plantillas aprobadas de la cuenta, con sus componentes, para que el
+// admin elija una y mapee sus variables.
+app.get("/api/templates", requireCampaignApiKey, async (req, res) => {
+  try {
+    const status = req.query.status === "all" ? "" : "APPROVED";
+    const templates = await listTemplates({ status });
+    res.json({ templates });
+  } catch (error) {
+    console.error("Error listando plantillas:", error?.response?.data || error.message);
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al listar las plantillas",
+      details: errData.error?.message || error.message
+    });
+  }
+});
+
+// Envía una plantilla a un destinatario de campaña. `components` llega ya armado
+// (header/body/botones) con los parámetros de ese destinatario.
+app.post("/api/campaign/send", requireCampaignApiKey, async (req, res) => {
+  const { to, templateName, languageCode, components = [] } = req.body;
+
+  if (!to || !templateName || !languageCode) {
+    return res.status(400).json({ error: "Faltan datos: to, templateName, languageCode" });
+  }
+  if (!Array.isArray(components)) {
+    return res.status(400).json({ error: "components debe ser un arreglo" });
+  }
+
+  const cleanPhone = String(to).replace(/[^0-9]/g, "").replace(/^0+/, "");
+  if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+    return res.status(400).json({ error: "Número de teléfono inválido", code: "invalid_phone" });
+  }
+
+  try {
+    const result = await sendTemplateComponents(cleanPhone, templateName, languageCode, components);
+    res.json({
+      status: "sent",
+      phone: cleanPhone,
+      messageId: result?.messages?.[0]?.id || null
+    });
+  } catch (error) {
+    const errData = error?.response?.data || {};
+    console.error(`Error enviando campaña a ...${cleanPhone.slice(-4)}:`, errData.error || error.message);
+    // Se propaga el status de Meta (4xx = error del mensaje, 429/5xx = reintentable)
+    res.status(error?.response?.status || 500).json({
+      error: "Error al enviar la plantilla",
+      code: errData.error?.code,
+      details: errData.error?.error_data?.details || errData.error?.message || error.message
     });
   }
 });
