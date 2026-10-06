@@ -25,6 +25,7 @@ import {
 import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
 import { processSurveyButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
+import { forwardInboundText } from "./services/inboundForwarder.js";
 
 dotenv.config();
 const app = express();
@@ -88,6 +89,13 @@ app.post("/webhook", async (req, res) => {
           if (messages) {
             for (const message of messages) {
               if (message.type === 'text') {
+                // Evaluaciones de conocimientos de GenCampus (el backend decide si le corresponde)
+                await forwardInboundText({
+                  from: message.from,
+                  text: message.text?.body,
+                  wamid: message.id,
+                  timestamp: message.timestamp
+                });
                 await processIncomingMessage({
                   from: message.from,
                   text: message.text,
@@ -934,6 +942,34 @@ app.post("/api/send-template", async (req, res) => {
       details: errData.error?.message || error.message,
       fullError: errData,
       fallbackEmailSent: fallbackSent
+    });
+  }
+});
+
+// API: Enviar texto libre por Cloud API (solo dentro de la ventana de 24 h
+// desde el último mensaje del usuario, p. ej. respuestas de un bot)
+app.post("/api/send-text", async (req, res) => {
+  const { to, message } = req.body;
+
+  if (!to || !message) {
+    return res.status(400).json({ error: "Faltan datos: to, message" });
+  }
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    // Límite de WhatsApp para mensajes de texto
+    const result = await sendTextMessage(cleanPhone, String(message).slice(0, 4096));
+    res.json({ status: "sent", phone: cleanPhone, messageId: result?.messages?.[0]?.id });
+  } catch (error) {
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar el mensaje",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message
     });
   }
 });
