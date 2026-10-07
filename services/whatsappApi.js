@@ -89,6 +89,35 @@ export async function sendTextMessage(to, message, previewUrl = false) {
 }
 
 /**
+ * Envía un mensaje interactivo (botones de respuesta o lista). Solo funciona
+ * dentro de la ventana de 24 h desde el último mensaje del usuario.
+ * @param {string} to - Número de teléfono del destinatario
+ * @param {Object} interactive - Objeto `interactive` de Meta ({ type: 'button' | 'list', body, action, ... })
+ */
+export async function sendInteractiveMessage(to, interactive) {
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive
+  };
+
+  try {
+    const response = await axios.post(account.apiUrl, payload, {
+      headers: {
+        'Authorization': `Bearer ${account.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error enviando mensaje interactivo:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
  * Envía una imagen con caption opcional
  */
 export async function sendImageMessage(to, imageUrl, caption = '') {
@@ -252,6 +281,35 @@ export async function listTemplates({ status = 'APPROVED' } = {}) {
   }
 
   return templates;
+}
+
+/**
+ * Crea un grupo de WhatsApp desde el número de negocio (Groups API).
+ * @param {Object} opts
+ * @param {string} opts.subject - Nombre del grupo
+ * @param {string} [opts.description] - Descripción opcional
+ * @param {string} [opts.joinApprovalMode] - 'auto_approve' (default) o 'approval_required'
+ */
+export async function createGroup({ subject, description, joinApprovalMode = 'auto_approve' }) {
+  const payload = {
+    messaging_product: 'whatsapp',
+    subject,
+    join_approval_mode: joinApprovalMode,
+    ...(description ? { description } : {})
+  };
+
+  try {
+    const response = await axios.post(`${WHATSAPP_API_URL}/${account.phoneNumberId}/groups`, payload, {
+      headers: {
+        'Authorization': `Bearer ${account.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error creando grupo:', error.response?.data || error.message);
+    throw error;
+  }
 }
 
 /**

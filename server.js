@@ -16,7 +16,9 @@ import {
   sendTemplateWithParams,
   sendTemplateWithButtons,
   sendTemplateComponents,
+  sendInteractiveMessage,
   listTemplates,
+  createGroup,
   uploadMedia
 } from "./services/whatsappApi.js";
 import {
@@ -27,8 +29,7 @@ import {
 import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
 import { processButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
-import { processSurveyButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
-import { forwardInboundText } from "./services/inboundForwarder.js";
+import { forwardInboundText, isJsonPayload } from "./services/inboundForwarder.js";
 
 dotenv.config();
 const app = express();
@@ -105,14 +106,38 @@ app.post("/webhook", async (req, res) => {
                   timestamp: message.timestamp
                 });
               } else if (message.type === 'button') {
-                // Respuesta a un botón quick reply de plantilla (campañas y encuesta de valor de negocio)
-                await processButtonReply({
-                  from: message.from,
-                  payload: message.button?.payload,
-                  buttonText: message.button?.text,
-                  wamid: message.id,
-                  timestamp: message.timestamp
-                });
+                const payload = message.button?.payload;
+                if (isJsonPayload(payload)) {
+                  // Respuesta a un botón quick reply de plantilla (campañas y encuesta de valor de negocio)
+                  await processButtonReply({
+                    from: message.from,
+                    payload,
+                    buttonText: message.button?.text,
+                    wamid: message.id,
+                    timestamp: message.timestamp
+                  });
+                } else {
+                  // Quick reply sin payload JSON (ej. "Empezar" del simulacro de GenCampus)
+                  await forwardInboundText({
+                    from: message.from,
+                    text: message.button?.text,
+                    replyId: payload,
+                    wamid: message.id,
+                    timestamp: message.timestamp
+                  });
+                }
+              } else if (message.type === 'interactive') {
+                // Respuesta a botones/listas enviados con /api/send-interactive (GenCampus)
+                const reply = message.interactive?.button_reply || message.interactive?.list_reply;
+                if (reply) {
+                  await forwardInboundText({
+                    from: message.from,
+                    text: reply.title,
+                    replyId: reply.id,
+                    wamid: message.id,
+                    timestamp: message.timestamp
+                  });
+                }
               }
             }
           }
@@ -1021,6 +1046,35 @@ app.post("/api/campaign/send", requireCampaignApiKey, async (req, res) => {
   }
 });
 
+// API: Crear un grupo de WhatsApp desde el número de negocio (Groups API).
+// Body: { subject, description?, joinApprovalMode?: 'auto_approve' | 'approval_required' }
+app.post("/api/groups", async (req, res) => {
+  const { subject, description, joinApprovalMode = "auto_approve" } = req.body;
+
+  if (!subject || !String(subject).trim()) {
+    return res.status(400).json({ error: "Falta subject (nombre del grupo)" });
+  }
+  if (!["auto_approve", "approval_required"].includes(joinApprovalMode)) {
+    return res.status(400).json({ error: "joinApprovalMode debe ser auto_approve o approval_required" });
+  }
+
+  try {
+    const result = await createGroup({
+      subject: String(subject).trim(),
+      description: description ? String(description) : undefined,
+      joinApprovalMode
+    });
+    res.json({ status: "created", groupId: result?.id || null, meta: result });
+  } catch (error) {
+    const errData = error?.response?.data || {};
+    res.status(error?.response?.status || 500).json({
+      error: "Error al crear el grupo",
+      code: errData.error?.code,
+      details: errData.error?.error_data?.details || errData.error?.message || error.message
+    });
+  }
+});
+
 // API: Enviar texto libre por Cloud API (solo dentro de la ventana de 24 h
 // desde el último mensaje del usuario, p. ej. respuestas de un bot)
 app.post("/api/send-text", async (req, res) => {
@@ -1043,6 +1097,73 @@ app.post("/api/send-text", async (req, res) => {
     const errData = error?.response?.data || {};
     res.status(500).json({
       error: "Error al enviar el mensaje",
+      code: errData.error?.code,
+      details: errData.error?.message || error.message
+    });
+  }
+});
+
+// API: Enviar botones de respuesta (máx. 3) o una lista (máx. 10 filas) por
+// Cloud API. Igual que /api/send-text, solo dentro de la ventana de 24 h.
+// Body: { to, body, header?, footer?,
+//         buttons?: [{ id, title }],
+//         list?: { button, sections: [{ title?, rows: [{ id, title, description? }] }] } }
+// Los textos se recortan a los límites de Meta en lugar de rechazar el envío.
+app.post("/api/send-interactive", async (req, res) => {
+  const { to, body, header, footer, buttons, list } = req.body;
+
+  if (!to || !body || (!buttons?.length && !list?.sections?.length)) {
+    return res.status(400).json({ error: "Faltan datos: to, body y buttons o list" });
+  }
+
+  const clip = (text, max) => String(text ?? '').slice(0, max);
+
+  try {
+    const cleanPhone = String(to).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ error: "Número de teléfono inválido" });
+    }
+
+    const interactive = { body: { text: clip(body, 1024) } };
+    if (header) interactive.header = { type: 'text', text: clip(header, 60) };
+    if (footer) interactive.footer = { text: clip(footer, 60) };
+
+    if (buttons?.length) {
+      if (buttons.length > 3) {
+        return res.status(400).json({ error: "Máximo 3 botones" });
+      }
+      interactive.type = 'button';
+      interactive.action = {
+        buttons: buttons.map((b) => ({
+          type: 'reply',
+          reply: { id: clip(b.id, 256), title: clip(b.title, 20) }
+        }))
+      };
+    } else {
+      const rowCount = list.sections.reduce((n, s) => n + (s.rows?.length || 0), 0);
+      if (rowCount < 1 || rowCount > 10) {
+        return res.status(400).json({ error: "La lista debe tener entre 1 y 10 filas" });
+      }
+      interactive.type = 'list';
+      interactive.action = {
+        button: clip(list.button || 'Ver opciones', 20),
+        sections: list.sections.map((s) => ({
+          ...(s.title ? { title: clip(s.title, 24) } : {}),
+          rows: (s.rows || []).map((r) => ({
+            id: clip(r.id, 200),
+            title: clip(r.title, 24),
+            ...(r.description ? { description: clip(r.description, 72) } : {})
+          }))
+        }))
+      };
+    }
+
+    const result = await sendInteractiveMessage(cleanPhone, interactive);
+    res.json({ status: "sent", phone: cleanPhone, messageId: result?.messages?.[0]?.id });
+  } catch (error) {
+    const errData = error?.response?.data || {};
+    res.status(500).json({
+      error: "Error al enviar el mensaje interactivo",
       code: errData.error?.code,
       details: errData.error?.message || error.message
     });
