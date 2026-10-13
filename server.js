@@ -28,7 +28,7 @@ import {
 } from "./services/emailFallback.js";
 import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
-import { processButtonReply, buildSurveyPayload } from "./services/surveyHandler.js";
+import { processButtonReply, buildSurveyPayload, forwardMessageStatus } from "./services/surveyHandler.js";
 import { forwardInboundText, isJsonPayload } from "./services/inboundForwarder.js";
 
 dotenv.config();
@@ -146,6 +146,8 @@ app.post("/webhook", async (req, res) => {
             for (const status of statuses) {
               const errInfo = status.errors?.length ? ` errors=${JSON.stringify(status.errors)}` : '';
               console.log(`📬 [Webhook Status] ${status.status} → ${status.recipient_id} (ID: ${status.id})${errInfo}`);
+              // Tracking de entregas en meetings-app; sin await para no demorar la respuesta a Meta
+              forwardMessageStatus(status);
               if (status.status === 'failed') {
                 console.log(`⚠️ Webhook reporta fallo de entrega en Meta. ID: ${status.id}`);
                 await triggerFallbackFromWebhook(status.id);

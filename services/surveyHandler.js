@@ -96,5 +96,39 @@ export async function processButtonReply({ from, payload, buttonText, wamid, tim
   }
 }
 
+/**
+ * Reenvía un estado de entrega de Meta (sent/delivered/read/failed) a la misma
+ * Cloud Function, que actualiza el tracking de mensajes de meetings-app
+ * (events/{eventId}/waMessages). Los mensajes que meetings-app no registró se
+ * ignoran allá. Nunca lanza: el tracking no debe afectar la respuesta a Meta.
+ *
+ * @param {Object} status - elemento de change.value.statuses del webhook de Meta
+ */
+export async function forwardMessageStatus(status) {
+  const fnUrl = getFirebaseFnUrl();
+  if (!fnUrl || !status?.id || !status?.status) return;
+
+  const secret = getFirebaseSecret();
+  try {
+    await axios.post(
+      fnUrl,
+      {
+        type: 'status',
+        wamid: status.id,
+        status: status.status,
+        timestamp: status.timestamp,
+        recipientId: status.recipient_id,
+        errors: status.errors || undefined
+      },
+      {
+        timeout: 15000,
+        headers: secret ? { 'x-webhook-secret': secret } : {}
+      }
+    );
+  } catch (error) {
+    console.error(`Error reenviando estado ${status.status} (${status.id}) a Firebase:`, error.response?.data || error.message);
+  }
+}
+
 /** @deprecated usar processButtonReply */
 export const processSurveyButtonReply = processButtonReply;
