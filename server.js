@@ -19,6 +19,7 @@ import {
   sendInteractiveMessage,
   listTemplates,
   getTemplateAnalytics,
+  getMessageAnalytics,
   createGroup,
   uploadMedia
 } from "./services/whatsappApi.js";
@@ -1030,7 +1031,30 @@ app.get("/api/template-analytics", requireCampaignApiKey, async (req, res) => {
     res.status(error?.response?.status || 500).json({
       error: "Error consultando la analítica de plantillas",
       code: errData.error?.code,
-      details: errData.error?.message || error.message
+      subcode: errData.error?.error_subcode,
+      details: errData.error?.error_user_msg || errData.error?.message || error.message
+    });
+  }
+});
+
+// Analítica de mensajes del número principal cada media hora (enviados/entregados).
+// Query: start, end (unix en segundos). Meta solo guarda los últimos 365 días.
+app.get("/api/message-analytics", requireCampaignApiKey, async (req, res) => {
+  const start = Number(req.query.start);
+  const end = Number(req.query.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return res.status(400).json({ error: "start y end (unix en segundos) son requeridos y end debe ser mayor" });
+  }
+  try {
+    res.json(await getMessageAnalytics({ start, end }));
+  } catch (error) {
+    console.error("Error consultando message analytics:", error?.response?.data || error.message);
+    const errData = error?.response?.data || {};
+    res.status(error?.response?.status || 500).json({
+      error: "Error consultando la analítica de mensajes",
+      code: errData.error?.code,
+      subcode: errData.error?.error_subcode,
+      details: errData.error?.error_user_msg || errData.error?.message || error.message
     });
   }
 });

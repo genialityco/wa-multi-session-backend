@@ -286,14 +286,15 @@ export async function listTemplates({ status = 'APPROVED' } = {}) {
 /**
  * Analítica diaria de plantillas (Template Analytics de Meta): enviados,
  * entregados y leídos por plantilla y por día. Meta solo la entrega con
- * granularidad DAILY, días en UTC, y máximo 10 plantillas por consulta, así que
- * se consulta en tandas. Requiere que la analítica de plantillas esté activada
- * en la WABA; si no, Meta responde con error.
+ * granularidad DAILY, días en UTC, solo de los últimos 90 días (el inicio se
+ * recorta) y máximo 10 plantillas por consulta, así que se consulta en tandas.
+ * Requiere las estadísticas de plantillas activadas en la WABA
+ * (is_enabled_for_insights); si no, Meta responde con el subcódigo 4182004.
  * @param {Object} opts
  * @param {number} opts.start - unix (s), inicio del rango
  * @param {number} opts.end - unix (s), fin del rango
  * @param {string[]} [opts.templateIds] - ids de plantillas; vacío = todas las de la cuenta
- * @returns {Promise<{ templates: Object[], points: Object[] }>}
+ * @returns {Promise<{ templates: Object[], points: Object[], start: number, end: number, clamped: boolean }>}
  */
 export async function getTemplateAnalytics({ start, end, templateIds }) {
   const wabaId = process.env.WHATSAPP_WABA_ID;
@@ -306,12 +307,17 @@ export async function getTemplateAnalytics({ start, end, templateIds }) {
   }));
   const ids = templateIds?.length ? templateIds : templates.map((t) => t.id);
 
+  const now = Math.floor(Date.now() / 1000);
+  const from = Math.max(start, Math.ceil((now - 89 * 86400) / 86400) * 86400);
+  const to = Math.min(end, now);
+  if (to <= from) return { templates, points: [], start: from, end: to, clamped: true };
+
   const points = [];
   for (let i = 0; i < ids.length; i += 10) {
     let url = `${WHATSAPP_API_URL}/${wabaId}/template_analytics`;
     let params = {
-      start,
-      end,
+      start: from,
+      end: to,
       granularity: 'DAILY',
       metric_types: JSON.stringify(['SENT', 'DELIVERED', 'READ']),
       template_ids: JSON.stringify(ids.slice(i, i + 10))
@@ -329,7 +335,75 @@ export async function getTemplateAnalytics({ start, end, templateIds }) {
     }
   }
 
-  return { templates, points };
+  return { templates, points, start: from, end: to, clamped: from > start };
+}
+
+let mainPhoneDigits = null;
+/** Número visible (solo dígitos) de WHATSAPP_PHONE_NUMBER_ID, para filtrar la analítica */
+async function getMainPhoneDigits() {
+  if (mainPhoneDigits) return mainPhoneDigits;
+  const response = await axios.get(`${WHATSAPP_API_URL}/${account.phoneNumberId}`, {
+    params: { fields: 'display_phone_number' },
+    headers: { 'Authorization': `Bearer ${account.accessToken}` }
+  });
+  mainPhoneDigits = String(response.data?.display_phone_number || '').replace(/\D/g, '');
+  return mainPhoneDigits;
+}
+
+const HALF_HOUR = 1800;
+const DAY = 86400;
+// Meta solo permite los últimos 365 días; con media hora, rangos largos dan error 500
+const MESSAGE_ANALYTICS_MAX_DAYS = 364;
+const MESSAGE_ANALYTICS_CHUNK = 15 * DAY;
+
+/**
+ * Analítica de mensajes del número principal (campo `analytics` de la WABA):
+ * enviados y entregados cada media hora, de todas las plantillas y mensajes del
+ * número juntos. No requiere activación (a diferencia de template_analytics) y
+ * cubre hasta 365 días atrás. Se consulta en tandas de 15 días.
+ * @param {Object} opts
+ * @param {number} opts.start - unix (s)
+ * @param {number} opts.end - unix (s)
+ * @returns {Promise<{ phoneLast4: string, start: number, end: number, clamped: boolean, points: Object[] }>}
+ */
+export async function getMessageAnalytics({ start, end }) {
+  const wabaId = process.env.WHATSAPP_WABA_ID;
+  if (!wabaId) {
+    throw new Error('WHATSAPP_WABA_ID no está configurado en el .env');
+  }
+  const digits = await getMainPhoneDigits();
+
+  const now = Math.floor(Date.now() / 1000);
+  const minStart = Math.ceil((now - MESSAGE_ANALYTICS_MAX_DAYS * DAY) / HALF_HOUR) * HALF_HOUR;
+  const from = Math.max(Math.floor(start / HALF_HOUR) * HALF_HOUR, minStart);
+  const to = Math.min(Math.ceil(end / HALF_HOUR) * HALF_HOUR, Math.ceil(now / HALF_HOUR) * HALF_HOUR);
+
+  const points = [];
+  for (let s = from; s < to; s += MESSAGE_ANALYTICS_CHUNK) {
+    const e = Math.min(s + MESSAGE_ANALYTICS_CHUNK, to);
+    const fields =
+      `analytics.start(${s}).end(${e}).granularity(HALF_HOUR)` +
+      (digits ? `.phone_numbers(["${digits}"])` : '');
+    let response;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        response = await axios.get(`${WHATSAPP_API_URL}/${wabaId}`, {
+          params: { fields },
+          headers: { 'Authorization': `Bearer ${account.accessToken}` }
+        });
+        break;
+      } catch (error) {
+        // Meta devuelve 500 transitorios en esta consulta: un reintento
+        if (attempt >= 2 || (error?.response?.status || 500) < 500) throw error;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    for (const p of response.data?.analytics?.data_points || []) {
+      points.push({ start: p.start, end: p.end, sent: p.sent || 0, delivered: p.delivered || 0 });
+    }
+  }
+
+  return { phoneLast4: digits.slice(-4), start: from, end: to, clamped: from > start, points };
 }
 
 /**
