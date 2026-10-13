@@ -284,6 +284,55 @@ export async function listTemplates({ status = 'APPROVED' } = {}) {
 }
 
 /**
+ * Analítica diaria de plantillas (Template Analytics de Meta): enviados,
+ * entregados y leídos por plantilla y por día. Meta solo la entrega con
+ * granularidad DAILY, días en UTC, y máximo 10 plantillas por consulta, así que
+ * se consulta en tandas. Requiere que la analítica de plantillas esté activada
+ * en la WABA; si no, Meta responde con error.
+ * @param {Object} opts
+ * @param {number} opts.start - unix (s), inicio del rango
+ * @param {number} opts.end - unix (s), fin del rango
+ * @param {string[]} [opts.templateIds] - ids de plantillas; vacío = todas las de la cuenta
+ * @returns {Promise<{ templates: Object[], points: Object[] }>}
+ */
+export async function getTemplateAnalytics({ start, end, templateIds }) {
+  const wabaId = process.env.WHATSAPP_WABA_ID;
+  if (!wabaId) {
+    throw new Error('WHATSAPP_WABA_ID no está configurado en el .env');
+  }
+
+  const templates = (await listTemplates({ status: '' })).map(({ id, name, language, status, category }) => ({
+    id, name, language, status, category
+  }));
+  const ids = templateIds?.length ? templateIds : templates.map((t) => t.id);
+
+  const points = [];
+  for (let i = 0; i < ids.length; i += 10) {
+    let url = `${WHATSAPP_API_URL}/${wabaId}/template_analytics`;
+    let params = {
+      start,
+      end,
+      granularity: 'DAILY',
+      metric_types: JSON.stringify(['SENT', 'DELIVERED', 'READ']),
+      template_ids: JSON.stringify(ids.slice(i, i + 10))
+    };
+    for (let page = 0; url && page < 50; page++) {
+      const response = await axios.get(url, {
+        params,
+        headers: { 'Authorization': `Bearer ${account.accessToken}` }
+      });
+      for (const block of response.data?.data || []) {
+        points.push(...(block.data_points || []));
+      }
+      url = response.data?.paging?.next || null;
+      params = undefined;
+    }
+  }
+
+  return { templates, points };
+}
+
+/**
  * Crea un grupo de WhatsApp desde el número de negocio (Groups API).
  * @param {Object} opts
  * @param {string} opts.subject - Nombre del grupo

@@ -18,6 +18,7 @@ import {
   sendTemplateComponents,
   sendInteractiveMessage,
   listTemplates,
+  getTemplateAnalytics,
   createGroup,
   uploadMedia
 } from "./services/whatsappApi.js";
@@ -1007,6 +1008,28 @@ app.get("/api/templates", requireCampaignApiKey, async (req, res) => {
     const errData = error?.response?.data || {};
     res.status(500).json({
       error: "Error al listar las plantillas",
+      details: errData.error?.message || error.message
+    });
+  }
+});
+
+// Analítica diaria por plantilla (enviados/entregados/leídos) de Meta.
+// Query: start, end (unix en segundos), templateIds (opcional, separados por coma).
+app.get("/api/template-analytics", requireCampaignApiKey, async (req, res) => {
+  const start = Number(req.query.start);
+  const end = Number(req.query.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return res.status(400).json({ error: "start y end (unix en segundos) son requeridos y end debe ser mayor" });
+  }
+  const templateIds = String(req.query.templateIds || "").split(",").map((s) => s.trim()).filter(Boolean);
+  try {
+    res.json(await getTemplateAnalytics({ start, end, templateIds }));
+  } catch (error) {
+    console.error("Error consultando template analytics:", error?.response?.data || error.message);
+    const errData = error?.response?.data || {};
+    res.status(error?.response?.status || 500).json({
+      error: "Error consultando la analítica de plantillas",
+      code: errData.error?.code,
       details: errData.error?.message || error.message
     });
   }
