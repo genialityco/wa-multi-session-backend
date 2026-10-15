@@ -1097,15 +1097,15 @@ app.post("/api/campaign/send", requireCampaignApiKey, async (req, res) => {
 });
 
 // Invitación de calendario por correo para una reunión de meetings-app (llamada
-// solo desde sus Cloud Functions). Body: { method: "REQUEST"|"CANCEL", uid,
+// solo desde sus Cloud Functions). Body: { method: "PUBLISH"|"REQUEST"|"CANCEL", uid,
 // sequence, start, end (ISO), to: { email, name }, eventName, counterpartName?,
 // counterpartCompany?, table?, location?, dateLabel?, timeLabel?, accessUrl?,
 // logoUrl?, fromName?, alarmMinutes?, isUpdate? }. Ver services/calendarInvite.js
 app.post("/api/email/meeting-invite", requireCampaignApiKey, async (req, res) => {
   const d = req.body || {};
   const email = String(d.to?.email || "").trim();
-  if (!["REQUEST", "CANCEL"].includes(d.method) || !d.uid || !d.start || !d.end || !email || !d.eventName) {
-    return res.status(400).json({ error: "Faltan datos: method (REQUEST|CANCEL), uid, start, end, to.email, eventName" });
+  if (!["PUBLISH", "REQUEST", "CANCEL"].includes(d.method) || !d.uid || !d.start || !d.end || !email || !d.eventName) {
+    return res.status(400).json({ error: "Faltan datos: method (PUBLISH|REQUEST|CANCEL), uid, start, end, to.email, eventName" });
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: "Correo inválido", code: "invalid_email" });

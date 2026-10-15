@@ -2,10 +2,13 @@
 // INVITACIONES DE CALENDARIO POR CORREO (reuniones de meetings-app)
 // ============================================================================
 //
-// Envía un correo con una invitación iCalendar (METHOD:REQUEST o CANCEL) para
-// que la reunión aparezca, se actualice o se borre sola en el calendario del
-// asistente (Gmail/Google Calendar, Outlook, Apple). El mismo UID + un SEQUENCE
-// mayor actualiza el evento ya agregado; CANCEL con el mismo UID lo elimina.
+// Envía un correo con un evento iCalendar para el calendario del asistente
+// (Gmail/Google Calendar, Outlook, Apple):
+//   PUBLISH  evento sin asistentes: Gmail muestra la tarjeta con el botón
+//            "Agregar al calendario" (sin Sí/No/Quizás). Lo usa meetings-app.
+//   REQUEST  invitación con el asistente: Gmail muestra Sí/No/Quizás. El mismo
+//            UID + un SEQUENCE mayor actualiza el evento ya agregado.
+//   CANCEL   con el mismo UID elimina el evento.
 //
 // Transporte (variables de entorno, leídas en el primer envío porque server.js
 // corre dotenv.config() después de evaluar los imports):
@@ -80,6 +83,7 @@ function foldLine(line) {
 
 export function buildIcs({ method, uid, sequence, start, end, summary, description, location, url, organizer, attendee, alarmMinutes }) {
   const cancel = method === "CANCEL";
+  const publish = method === "PUBLISH";
   const lines = [
     "BEGIN:VCALENDAR",
     "PRODID:-//Geniality//Meetings//ES",
@@ -99,8 +103,11 @@ export function buildIcs({ method, uid, sequence, start, end, summary, descripti
     `STATUS:${cancel ? "CANCELLED" : "CONFIRMED"}`,
     "TRANSP:OPAQUE",
     `ORGANIZER;CN=${quoteParam(organizer.name)}:mailto:${organizer.email}`,
-    // La reunión ya está confirmada en la plataforma: no se pide respuesta
-    `ATTENDEE;CN=${quoteParam(attendee.name)};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:${attendee.email}`,
+    // Sin ATTENDEE en PUBLISH: así Gmail ofrece "Agregar al calendario" en vez de
+    // pedir respuesta. En REQUEST la reunión ya está confirmada: RSVP=FALSE
+    publish
+      ? null
+      : `ATTENDEE;CN=${quoteParam(attendee.name)};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:${attendee.email}`,
   ];
   if (!cancel && Number(alarmMinutes) > 0) {
     lines.push(
@@ -168,7 +175,7 @@ function buildEmailHtml(d, cancel) {
 /**
  * Envía la invitación de una reunión.
  * @param {object} d
- *   method "REQUEST" | "CANCEL", uid, sequence, start/end (ISO), to { email, name },
+ *   method "PUBLISH" | "REQUEST" | "CANCEL", uid, sequence, start/end (ISO), to { email, name },
  *   eventName, counterpartName?, counterpartCompany?, table?, location?,
  *   dateLabel?, timeLabel?, accessUrl?, logoUrl?, fromName?, alarmMinutes?, isUpdate?
  * @returns {Promise<{ messageId: string }>}
@@ -179,6 +186,7 @@ export async function sendMeetingInvite(d) {
   if (!transport || !fromEmail) throw new Error("Correo no configurado (MAIL_FROM y SMTP_HOST o AWS_*)");
 
   const cancel = d.method === "CANCEL";
+  const method = ["PUBLISH", "CANCEL"].includes(d.method) ? d.method : "REQUEST";
   const fromName = d.fromName || d.eventName || process.env.MAIL_FROM_NAME || "Geniality";
   const withWho = d.counterpartName
     ? `${d.counterpartName}${d.counterpartCompany && d.counterpartCompany !== d.counterpartName ? ` (${d.counterpartCompany})` : ""}`
@@ -197,7 +205,7 @@ export async function sendMeetingInvite(d) {
     .join("\n");
 
   const ics = buildIcs({
-    method: cancel ? "CANCEL" : "REQUEST",
+    method,
     uid: d.uid,
     sequence: d.sequence,
     start: d.start,
@@ -217,7 +225,7 @@ export async function sendMeetingInvite(d) {
     subject,
     text: `${cancel ? "Reunión cancelada" : summary}\n${description}`,
     html: buildEmailHtml({ ...d, subject, attendeeName: d.to.name || "", location: d.location }, cancel),
-    icalEvent: { method: cancel ? "CANCEL" : "REQUEST", filename: cancel ? "cancelacion.ics" : "invitacion.ics", content: ics },
+    icalEvent: { method, filename: cancel ? "cancelacion.ics" : "invitacion.ics", content: ics },
   });
   return { messageId: info.messageId };
 }
