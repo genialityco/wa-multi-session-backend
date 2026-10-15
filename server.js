@@ -32,6 +32,7 @@ import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
 import { processButtonReply, buildSurveyPayload, forwardMessageStatus } from "./services/surveyHandler.js";
 import { forwardInboundText, isJsonPayload } from "./services/inboundForwarder.js";
+import { sendMeetingInvite } from "./services/calendarInvite.js";
 
 dotenv.config();
 const app = express();
@@ -1092,6 +1093,33 @@ app.post("/api/campaign/send", requireCampaignApiKey, async (req, res) => {
       code: errData.error?.code,
       details: errData.error?.error_data?.details || errData.error?.message || error.message
     });
+  }
+});
+
+// Invitación de calendario por correo para una reunión de meetings-app (llamada
+// solo desde sus Cloud Functions). Body: { method: "REQUEST"|"CANCEL", uid,
+// sequence, start, end (ISO), to: { email, name }, eventName, counterpartName?,
+// counterpartCompany?, table?, location?, dateLabel?, timeLabel?, accessUrl?,
+// logoUrl?, fromName?, alarmMinutes?, isUpdate? }. Ver services/calendarInvite.js
+app.post("/api/email/meeting-invite", requireCampaignApiKey, async (req, res) => {
+  const d = req.body || {};
+  const email = String(d.to?.email || "").trim();
+  if (!["REQUEST", "CANCEL"].includes(d.method) || !d.uid || !d.start || !d.end || !email || !d.eventName) {
+    return res.status(400).json({ error: "Faltan datos: method (REQUEST|CANCEL), uid, start, end, to.email, eventName" });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Correo inválido", code: "invalid_email" });
+  }
+  if (isNaN(Date.parse(d.start)) || isNaN(Date.parse(d.end))) {
+    return res.status(400).json({ error: "start/end deben ser fechas ISO" });
+  }
+  try {
+    const result = await sendMeetingInvite({ ...d, to: { email, name: d.to?.name } });
+    res.json({ status: "sent", messageId: result.messageId });
+  } catch (error) {
+    console.error(`Error enviando invitación a ${email}:`, error.message);
+    const notConfigured = /no configurado/.test(error.message);
+    res.status(notConfigured ? 503 : 500).json({ error: "Error al enviar la invitación", details: error.message });
   }
 });
 
