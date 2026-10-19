@@ -41,6 +41,8 @@ This is a single Express + Socket.IO app (`server.js`) that bridges **two entire
 
 `message.type === 'button'` webhook events go to `processButtonReply`, which parses the button payload JSON and forwards it to the meetings-app Cloud Function at `FIREBASE_WA_REPLY_FN_URL` (falls back to `FIREBASE_SURVEY_FN_URL`) with header `x-webhook-secret` = `FIREBASE_SURVEY_SECRET`. Two payload formats: campaigns `{t:"wac", e:eventId, c:campaignId, u:userId, b:buttonIndex}` and the legacy "valor de negocio" survey `{t:"encuesta_valor_negocio", v, e}`. Env vars are read lazily (at call time) because `server.js` runs `dotenv.config()` after imports are evaluated.
 
+Inbound **text** messages containing a digit are first offered to the same function as `{ type: "text", phone, text, wamid, timestamp }` (`offerTextToMeetings`): meetings-app answers `{ handled, reply? }` — `handled: true` means it was a chat reply to its company survey ("5 20000"), so the server sends `reply` with `sendTextMessage` and does **not** forward it to GenCampus or the confirmation handler; on `handled: false` or any error the text continues to GenCampus as before.
+
 The same function also receives every Meta delivery status (`forwardMessageStatus`, fire-and-forget from the `/webhook` statuses loop) as `{ type: "status", wamid, status, timestamp, recipientId, errors? }`; meetings-app uses it to track sent/delivered/read/failed of the messages it logged in `events/{eventId}/waMessages` and ignores the rest.
 
 ### Email fallback system ([services/emailFallback.js](services/emailFallback.js))

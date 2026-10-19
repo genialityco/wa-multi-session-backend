@@ -130,5 +130,42 @@ export async function forwardMessageStatus(status) {
   }
 }
 
+/**
+ * Ofrece un texto entrante con dígitos a meetings-app (encuesta por empresa
+ * respondida por chat, ej. "5 20000"). Si meetings-app lo reconoce devuelve
+ * { handled: true, reply? }: el caller envía `reply` y NO lo reenvía a GenCampus.
+ * Ante cualquier error devuelve { handled: false } para no perder el mensaje.
+ *
+ * @param {Object} data
+ * @param {string} data.from      - teléfono del contacto (message.from)
+ * @param {string} data.text      - texto del mensaje
+ * @param {string} data.wamid     - id del mensaje entrante
+ * @param {string} data.timestamp - timestamp del mensaje entrante
+ * @returns {Promise<{ handled: boolean, reply?: string }>}
+ */
+export async function offerTextToMeetings({ from, text, wamid, timestamp }) {
+  const fnUrl = getFirebaseFnUrl();
+  if (!fnUrl || !from || !/\d/.test(String(text || ''))) return { handled: false };
+
+  const secret = getFirebaseSecret();
+  try {
+    const res = await axios.post(
+      fnUrl,
+      { type: 'text', phone: from, text, wamid, timestamp },
+      {
+        timeout: 10000,
+        headers: secret ? { 'x-webhook-secret': secret } : {}
+      }
+    );
+    if (res.data?.handled) {
+      console.log(`✅ Respuesta por chat a la encuesta por empresa de ...${String(from).slice(-4)}`);
+      return { handled: true, reply: typeof res.data.reply === 'string' ? res.data.reply : undefined };
+    }
+  } catch (error) {
+    console.error('Error ofreciendo texto entrante a meetings-app:', error.response?.data || error.message);
+  }
+  return { handled: false };
+}
+
 /** @deprecated usar processButtonReply */
 export const processSurveyButtonReply = processButtonReply;

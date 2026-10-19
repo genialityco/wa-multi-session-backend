@@ -30,7 +30,7 @@ import {
 } from "./services/emailFallback.js";
 import { processIncomingMessage } from "./services/webhookHandler.js";
 import { belongsToSecondaryNumber, forwardToSecondaryWebhook } from "./services/webhookRouter.js";
-import { processButtonReply, buildSurveyPayload, forwardMessageStatus } from "./services/surveyHandler.js";
+import { processButtonReply, buildSurveyPayload, forwardMessageStatus, offerTextToMeetings } from "./services/surveyHandler.js";
 import { forwardInboundText, isJsonPayload } from "./services/inboundForwarder.js";
 import { sendMeetingInvite } from "./services/calendarInvite.js";
 
@@ -96,6 +96,22 @@ app.post("/webhook", async (req, res) => {
           if (messages) {
             for (const message of messages) {
               if (message.type === 'text') {
+                // Encuesta por empresa de meetings-app respondida por chat ("5 20000"):
+                // si la reconoce, se contesta aquí y no sigue a GenCampus
+                const survey = await offerTextToMeetings({
+                  from: message.from,
+                  text: message.text?.body,
+                  wamid: message.id,
+                  timestamp: message.timestamp
+                });
+                if (survey.handled) {
+                  if (survey.reply) {
+                    await sendTextMessage(message.from, survey.reply).catch((err) =>
+                      console.error('Error respondiendo la encuesta por empresa:', err.message)
+                    );
+                  }
+                  continue;
+                }
                 // Evaluaciones de conocimientos de GenCampus (el backend decide si le corresponde)
                 await forwardInboundText({
                   from: message.from,
