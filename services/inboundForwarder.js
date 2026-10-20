@@ -46,6 +46,44 @@ export async function forwardInboundText({ from, text, replyId, wamid, timestamp
   }
 }
 
+/**
+ * Reenvía un estado de entrega de Meta (sent/delivered/read/failed) a GenCampus,
+ * que lo asocia por wamid a sus recordatorios e invitaciones para medir entrega
+ * y lectura; ignora los wamid que no son suyos. Se llama sin await desde el
+ * webhook para no demorar la respuesta a Meta.
+ *
+ * @param {Object} status - elemento de change.value.statuses
+ */
+export async function forwardInboundStatus(status) {
+  // Se lee al usarse: server.js ejecuta dotenv.config() después de los imports
+  const url = process.env.INBOUND_STATUS_FORWARD_URL;
+  if (!url || !status?.id || !status?.status) return;
+
+  try {
+    await axios.post(
+      url,
+      {
+        wamid: status.id,
+        status: status.status,
+        timestamp: status.timestamp,
+        recipientId: status.recipient_id,
+        ...(status.errors?.length ? { errors: status.errors } : {})
+      },
+      {
+        timeout: 5000,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(process.env.INBOUND_TEXT_FORWARD_SECRET
+            ? { 'x-webhook-secret': process.env.INBOUND_TEXT_FORWARD_SECRET }
+            : {})
+        }
+      }
+    );
+  } catch (error) {
+    console.error('❌ Error reenviando estado a GenCampus:', error.response?.data || error.message);
+  }
+}
+
 /** true si el payload del botón es JSON (encuestas/campañas, ver surveyHandler). */
 export function isJsonPayload(payload) {
   try {
