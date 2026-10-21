@@ -18,6 +18,7 @@ import {
   sendTemplateComponents,
   sendInteractiveMessage,
   listTemplates,
+  createTemplate,
   getTemplateAnalytics,
   getMessageAnalytics,
   createGroup,
@@ -1029,6 +1030,28 @@ app.get("/api/templates", requireCampaignApiKey, async (req, res) => {
     res.status(500).json({
       error: "Error al listar las plantillas",
       details: errData.error?.message || error.message
+    });
+  }
+});
+
+// Crea una plantilla y la envía a revisión de Meta (Gen.ON de GenCampus).
+// Body: { name, language, category, components, parameter_format? } con el
+// formato de la API de Meta. Responde { id, status, category } o propaga el
+// error de Meta (p. ej. nombre duplicado o variables mal formadas).
+app.post("/api/templates", requireCampaignApiKey, async (req, res) => {
+  const { name, language, category, components } = req.body || {};
+  if (!name || !language || !category || !Array.isArray(components)) {
+    return res.status(400).json({ error: "Faltan datos: name, language, category, components" });
+  }
+  try {
+    res.json(await createTemplate(req.body));
+  } catch (error) {
+    const errData = error?.response?.data || {};
+    console.error("Error creando plantilla:", errData.error || error.message);
+    res.status(error?.response?.status || 500).json({
+      error: "Error al crear la plantilla",
+      code: errData.error?.code,
+      details: errData.error?.error_user_msg || errData.error?.message || error.message
     });
   }
 });

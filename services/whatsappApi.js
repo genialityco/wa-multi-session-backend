@@ -263,7 +263,7 @@ export async function listTemplates({ status = 'APPROVED' } = {}) {
   const templates = [];
   let url = `${WHATSAPP_API_URL}/${wabaId}/message_templates`;
   let params = {
-    fields: 'id,name,language,status,category,parameter_format,components',
+    fields: 'id,name,language,status,category,parameter_format,components,rejected_reason',
     limit: 100,
     ...(status ? { status } : {})
   };
@@ -281,6 +281,31 @@ export async function listTemplates({ status = 'APPROVED' } = {}) {
   }
 
   return templates;
+}
+
+/**
+ * Crea una plantilla en la WABA y la envía a revisión de Meta. Devuelve
+ * { id, status, category } (status suele ser PENDING; Meta puede cambiar la
+ * categoría si no corresponde al contenido).
+ * Requiere WHATSAPP_WABA_ID en el .env.
+ * @param {Object} template - { name, language, category, components, parameter_format? }
+ */
+export async function createTemplate(template) {
+  const wabaId = process.env.WHATSAPP_WABA_ID;
+  if (!wabaId) {
+    throw new Error('WHATSAPP_WABA_ID no está configurado en el .env');
+  }
+  const response = await axios.post(
+    `${WHATSAPP_API_URL}/${wabaId}/message_templates`,
+    template,
+    {
+      headers: {
+        'Authorization': `Bearer ${account.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  return response.data;
 }
 
 /**
