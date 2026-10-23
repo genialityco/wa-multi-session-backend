@@ -74,6 +74,10 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", async (req, res) => {
+  // Se confirma a Meta de inmediato y se procesa después: si la respuesta
+  // tarda (reenvíos a GenCampus, encuestas) o falla, Meta reintenta el mismo
+  // mensaje y el chatbot lo contestaría otra vez
+  res.sendStatus(200);
   try {
     const body = req.body;
 
@@ -179,11 +183,9 @@ app.post("/webhook", async (req, res) => {
         }
       }
     }
-
-    res.sendStatus(200);
   } catch (error) {
+    // Ya se respondió 200: un reintento de Meta no arreglaría el error
     console.error('Error procesando webhook:', error);
-    res.sendStatus(500);
   }
 });
 
